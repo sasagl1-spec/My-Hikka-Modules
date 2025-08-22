@@ -1,0 +1,28 @@
+from .. import loader, utils
+from telethon.tl.types import Message
+
+@loader.tds
+class MyModuleMod(loader.Module):
+    """Мой первый модуль для Hikka"""
+    
+    strings = {"name": "MyModule"}
+    
+    @loader.command(ru_doc="Тестовая команда")
+    async def testcmd(self, message: Message):
+        """Проверка работы модуля"""
+        await utils.answer(
+            message, 
+            "✅ Модуль загружен из GitHub!\n"
+            "🎉 Все работает отлично!"
+        )
+    
+    @loader.command(ru_doc="Информация")
+    async def infocmd(self, message: Message):
+        """Показать информацию"""
+        info = """
+📋 Модуль из GitHub:
+• Репозиторий: My-Hikka-Modules
+• Автор: sasagil-spec
+• Статус: Работает 👍
+        """
+        await utils.answer(message, info)
