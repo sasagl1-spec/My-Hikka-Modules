@@ -4,21 +4,26 @@ import re
 import asyncio
 
 @loader.tds
-class ChannelAutoReactsMod(loader.Module):
-    """Модуль автореакций с упоминанием канала после установки"""
+class SmartAutoReactsMod(loader.Module):
+    """Умный модуль автореакций с периодичностью и каналом"""
     
-    strings = {"name": "ChannelAutoReacts"}
+    strings = {"name": "SmartAutoReacts"}
     
     def __init__(self):
         self.installed = False
+        self.message_counters = {}  # Счетчики сообщений по чатам
         
     async def client_ready(self, client, db):
         self._db = db
         self._client = client
-        self.chats = self._db.get("ChannelAutoReacts", "chats", {})
+        self.chats = self._db.get("SmartAutoReacts", "chats", {})
+        self.settings = self._db.get("SmartAutoReacts", "settings", {
+            "default_interval": 40,
+            "show_channel_info": True
+        })
         
         # Отправляем сообщение о канале при первой установке
-        if not self.installed:
+        if not self.installed and self.settings["show_channel_info"]:
             await asyncio.sleep(2)
             try:
                 await self._client.send_message(
@@ -26,22 +31,26 @@ class ChannelAutoReactsMod(loader.Module):
                     "🚀 Модуль успешно установлен!\n"
                     "📢 Подпишись на канал модулей: @modulesTheHika\n"
                     "👤 Создатель: @vipqlkxn\n\n"
-                    "Для начала работы используй команды:\n"
+                    "🔧 Команды модуля:\n"
                     ".ar - добавить автореакцию\n"
+                    ".arinterval - установить интервал\n"
                     ".unar - удалить автореакцию\n"
-                    ".listar - список чатов"
+                    ".listar - список чатов\n"
+                    ".channel - информация о канале"
                 )
             except:
                 pass
             self.installed = True
     
     async def arcmd(self, message: Message):
-        """Добавить чат: .ar <chat_id/ссылка> <emoji>"""
+        """Добавить чат: .ar <chat_id/ссылка> <emoji> [интервал]"""
         args = utils.get_args_raw(message).split()
         if len(args) < 2:
-            return await message.edit("Формат: .ar <chat/ссылка> <emoji>")
+            return await message.edit("Формат: .ar <chat/ссылка> <emoji> [интервал]")
         
-        chat_identifier, emoji = args[0], args[1]
+        chat_identifier = args[0]
+        emoji = args[1]
+        interval = int(args[2]) if len(args) > 2 and args[2].isdigit() else self.settings["default_interval"]
         
         if re.match(r"^-?\d+$", chat_identifier):
             chat_id = chat_identifier
@@ -52,26 +61,58 @@ class ChannelAutoReactsMod(loader.Module):
                     chat = await self._client.get_entity(username)
                     chat_id = str(chat.id)
                 except:
-                    return await message.edit("Чат не найден")
+                    return await message.edit("❌ Чат не найден")
             else:
-                return await message.edit("Неверный формат")
+                return await message.edit("❌ Неверный формат")
         
-        self.chats[chat_id] = emoji
-        self._db.set("ChannelAutoReacts", "chats", self.chats)
-        await message.edit(
-            f"✅ Чат {chat_identifier} добавлен с реакцией {emoji}\n"
-            f"📢 Канал модулей: @modulesTheHika"
+        # Сохраняем настройки чата
+        self.chats[chat_id] = {
+            "emoji": emoji,
+            "interval": interval,
+            "counter": 0
+        }
+        self._db.set("SmartAutoReacts", "chats", self.chats)
+        
+        response = (
+            f"✅ Чат {chat_identifier} добавлен\n"
+            f"🎯 Реакция: {emoji}\n"
+            f"📊 Интервал: каждые {interval} сообщений"
         )
+        if self.settings["show_channel_info"]:
+            response += f"\n📢 Канал: @modulesTheHika"
+            
+        await message.edit(response)
+        
+    async def arintervalcmd(self, message: Message):
+        """Установить интервал: .arinterval <интервал>"""
+        args = utils.get_args_raw(message)
+        if not args.isdigit():
+            return await message.edit("❌ Укажите число")
+        
+        interval = int(args)
+        self.settings["default_interval"] = interval
+        self._db.set("SmartAutoReacts", "settings", self.settings)
+        
+        response = f"✅ Интервал изменен на {interval} сообщений"
+        if self.settings["show_channel_info"]:
+            response += f"\n📢 Канал: @modulesTheHika"
+            
+        await message.edit(response)
         
     async def unarcmd(self, message: Message):
         """Удалить чат: .unar <chat_id/ссылка>"""
         chat_identifier = utils.get_args_raw(message)
         
+        # Поиск по ID
         if chat_identifier in self.chats:
             del self.chats[chat_identifier]
-            self._db.set("ChannelAutoReacts", "chats", self.chats)
-            return await message.edit(f"✅ Чат {chat_identifier} удален")
+            self._db.set("SmartAutoReacts", "chats", self.chats)
+            response = f"✅ Чат {chat_identifier} удален"
+            if self.settings["show_channel_info"]:
+                response += f"\n📢 Канал: @modulesTheHika"
+            return await message.edit(response)
         
+        # Поиск по ссылке
         if "t.me/" in chat_identifier:
             username = chat_identifier.split("t.me/")[1].split("/")[0]
             try:
@@ -79,8 +120,11 @@ class ChannelAutoReactsMod(loader.Module):
                 chat_id = str(chat.id)
                 if chat_id in self.chats:
                     del self.chats[chat_id]
-                    self._db.set("ChannelAutoReacts", "chats", self.chats)
-                    return await message.edit(f"✅ Чат {chat_identifier} удален")
+                    self._db.set("SmartAutoReacts", "chats", self.chats)
+                    response = f"✅ Чат {chat_identifier} удален"
+                    if self.settings["show_channel_info"]:
+                        response += f"\n📢 Канал: @modulesTheHika"
+                    return await message.edit(response)
             except:
                 pass
         
@@ -89,33 +133,59 @@ class ChannelAutoReactsMod(loader.Module):
     async def listarcmd(self, message: Message):
         """Список чатов: .listar"""
         if not self.chats:
-            return await message.edit(
-                "📭 Список чатов пуст\n"
-                "📢 Канал модулей: @modulesTheHika"
-            )
+            response = "📭 Список чатов пуст"
+            if self.settings["show_channel_info"]:
+                response += f"\n📢 Канал: @modulesTheHika"
+            return await message.edit(response)
         
         result = "📋 Чаты с автореакциями:\n"
-        for chat_id, emoji in self.chats.items():
-            result += f"• {chat_id} - {emoji}\n"
+        for chat_id, settings in self.chats.items():
+            result += f"• {chat_id} - {settings['emoji']} (каждые {settings['interval']} сообщений)\n"
         
-        result += f"\n📢 Канал модулей: @modulesTheHika"
+        if self.settings["show_channel_info"]:
+            result += f"\n📢 Канал модулей: @modulesTheHika"
         await message.edit(result)
         
     async def watcher(self, message: Message):
-        if not hasattr(message, "chat_id"):
+        if not hasattr(message, "chat_id") or not message.chat_id:
             return
             
         chat_id = str(message.chat_id)
         if chat_id in self.chats:
-            try:
-                await message.react(self.chats[chat_id])
-            except:
-                pass
+            chat_settings = self.chats[chat_id]
+            
+            # Инициализируем счетчик если нужно
+            if "counter" not in chat_settings:
+                chat_settings["counter"] = 0
+                
+            # Увеличиваем счетчик
+            chat_settings["counter"] += 1
+            
+            # Проверяем достиг ли счетчик интервала
+            if chat_settings["counter"] >= chat_settings["interval"]:
+                try:
+                    await message.react(chat_settings["emoji"])
+                    chat_settings["counter"] = 0  # Сбрасываем счетчик
+                except Exception as e:
+                    print(f"Ошибка реакции: {e}")
+                
+            # Сохраняем обновленные настройки
+            self.chats[chat_id] = chat_settings
+            self._db.set("SmartAutoReacts", "chats", self.chats)
 
     async def channelcmd(self, message: Message):
         """Информация о канале: .channel"""
         await message.edit(
             "📢 Телеграм канал модулей: @modulesTheHika\n"
             "👤 Создатель модуля: @vipqlkxn\n"
-            "🚀 Подпишись для новых модулей!"
+            "🚀 Подпишись для новых модулей!\n"
+            f"⚙️ Текущий интервал: {self.settings['default_interval']} сообщений"
         )
+        
+    async def togglechannelcmd(self, message: Message):
+        """Вкл/выкл уведомления о канале: .togglechannel"""
+        self.settings["show_channel_info"] = not self.settings["show_channel_info"]
+        self._db.set("SmartAutoReacts", "settings", self.settings)
+        
+        status = "включены" if self.settings["show_channel_info"] else "выключены"
+        await message.edit(f"✅ Уведомления о канале {status}")
