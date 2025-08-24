@@ -1,23 +1,24 @@
 from hikka import loader, utils
 from telethon.tl.types import Message, PeerChannel, PeerChat, PeerUser
+from telethon.tl.functions.messages import SendReactionRequest
+from telethon.tl.types import ReactionEmoji
 import re
 import asyncio
 
 @loader.tds
-class FixedAutoReactsMod(loader.Module):
-    """Исправленный модуль автореакций с периодичностью"""
+class WorkingAutoReactsMod(loader.Module):
+    """Рабочий модуль автореакций с периодичностью"""
     
-    strings = {"name": "FixedAutoReacts"}
+    strings = {"name": "WorkingAutoReacts"}
     
     def __init__(self):
         self.installed = False
-        self.message_counters = {}
         
     async def client_ready(self, client, db):
         self._db = db
         self._client = client
-        self.chats = self._db.get("FixedAutoReacts", "chats", {})
-        self.settings = self._db.get("FixedAutoReacts", "settings", {
+        self.chats = self._db.get("WorkingAutoReacts", "chats", {})
+        self.settings = self._db.get("WorkingAutoReacts", "settings", {
             "default_interval": 40,
             "show_channel_info": True
         })
@@ -30,11 +31,13 @@ class FixedAutoReactsMod(loader.Module):
                     "🚀 Модуль успешно установлен!\n"
                     "📢 Подпишись на канал: @modulesTheHika\n"
                     "👤 Создатель: @vipqlkxn\n\n"
+                    "✅ Реакции работают через SendReactionRequest\n"
                     "🔧 Команды:\n"
                     ".ar - добавить реакцию\n"
                     ".arinterval - установить интервал\n"
                     ".unar - удалить реакцию\n"
-                    ".listar - список чатов"
+                    ".listar - список чатов\n"
+                    ".testr - тест реакции"
                 )
             except:
                 pass
@@ -46,13 +49,29 @@ class FixedAutoReactsMod(loader.Module):
             if hasattr(message, 'chat_id') and message.chat_id:
                 return str(message.chat_id)
             elif hasattr(message, 'peer_id'):
-                if isinstance(message.peer_id, (PeerChannel, PeerChat)):
+                if hasattr(message.peer_id, 'channel_id'):
                     return str(message.peer_id.channel_id)
-                elif isinstance(message.peer_id, PeerUser):
+                elif hasattr(message.peer_id, 'chat_id'):
+                    return str(message.peer_id.chat_id)
+                elif hasattr(message.peer_id, 'user_id'):
                     return str(message.peer_id.user_id)
             return None
         except:
             return None
+    
+    async def send_reaction(self, chat_id: str, message_id: int, emoji: str):
+        """Отправка реакции через SendReactionRequest"""
+        try:
+            reaction = ReactionEmoji(emoticon=emoji)
+            await self._client(SendReactionRequest(
+                peer=int(chat_id),
+                msg_id=message_id,
+                reaction=[reaction]
+            ))
+            return True
+        except Exception as e:
+            print(f"Ошибка отправки реакции: {e}")
+            return False
     
     async def arcmd(self, message: Message):
         """Добавить чат: .ar <chat_id/ссылка> <emoji> [интервал]"""
@@ -80,18 +99,26 @@ class FixedAutoReactsMod(loader.Module):
                 else:
                     return await message.edit("❌ Неверный формат")
             
+            # Тестируем реакцию перед добавлением
+            test_msg = await message.edit("🧪 Тестируем реакцию...")
+            test_result = await self.send_reaction(chat_id, test_msg.id, emoji)
+            
+            if not test_result:
+                return await message.edit("❌ Не удалось поставить реакцию. Проверьте права бота.")
+            
             self.chats[chat_id] = {
                 "emoji": emoji,
                 "interval": interval,
                 "counter": 0,
                 "original_identifier": chat_identifier
             }
-            self._db.set("FixedAutoReacts", "chats", self.chats)
+            self._db.set("WorkingAutoReacts", "chats", self.chats)
             
             response = (
                 f"✅ Чат {chat_identifier} добавлен\n"
                 f"🎯 Реакция: {emoji}\n"
-                f"📊 Интервал: каждые {interval} сообщений"
+                f"📊 Интервал: каждые {interval} сообщений\n"
+                f"✅ Тест реакции пройден успешно!"
             )
             if self.settings["show_channel_info"]:
                 response += f"\n📢 Канал: @modulesTheHika"
@@ -100,7 +127,63 @@ class FixedAutoReactsMod(loader.Module):
             
         except Exception as e:
             await message.edit(f"❌ Ошибка: {str(e)}")
+    
+    async def testrcmd(self, message: Message):
+        """Тест реакции: .testr <emoji>"""
+        try:
+            emoji = utils.get_args_raw(message)
+            if not emoji:
+                return await message.edit("❌ Укажите эмодзи")
+            
+            chat_id = self.get_chat_id(message)
+            if not chat_id:
+                return await message.edit("❌ Не удалось определить чат")
+            
+            result = await self.send_reaction(chat_id, message.id, emoji)
+            if result:
+                await message.edit(f"✅ Реакция {emoji} отправлена успешно!")
+            else:
+                await message.edit("❌ Не удалось отправить реакцию")
+                
+        except Exception as e:
+            await message.edit(f"❌ Ошибка теста: {str(e)}")
         
+    async def watcher(self, message: Message):
+        try:
+            chat_id = self.get_chat_id(message)
+            if not chat_id or chat_id not in self.chats:
+                return
+                
+            chat_settings = self.chats[chat_id]
+            
+            # Инициализация счетчика
+            if "counter" not in chat_settings:
+                chat_settings["counter"] = 0
+                
+            chat_settings["counter"] += 1
+            
+            # Проверка интервала
+            if chat_settings["counter"] >= chat_settings["interval"]:
+                success = await self.send_reaction(
+                    chat_id, 
+                    message.id, 
+                    chat_settings["emoji"]
+                )
+                
+                if success:
+                    chat_settings["counter"] = 0
+                    print(f"✅ Реакция {chat_settings['emoji']} поставлена в чате {chat_id}")
+                else:
+                    print(f"❌ Ошибка реакции в чате {chat_id}")
+                
+            # Сохранение обновлений
+            self.chats[chat_id] = chat_settings
+            self._db.set("WorkingAutoReacts", "chats", self.chats)
+            
+        except Exception as e:
+            print(f"Ошибка в watcher: {e}")
+
+    # Остальные команды остаются без изменений
     async def arintervalcmd(self, message: Message):
         """Установить интервал: .arinterval <интервал>"""
         try:
@@ -113,7 +196,7 @@ class FixedAutoReactsMod(loader.Module):
                 return await message.edit("❌ Интервал должен быть больше 0")
                 
             self.settings["default_interval"] = interval
-            self._db.set("FixedAutoReacts", "settings", self.settings)
+            self._db.set("WorkingAutoReacts", "settings", self.settings)
             
             response = f"✅ Интервал изменен на {interval} сообщений"
             if self.settings["show_channel_info"]:
@@ -134,7 +217,7 @@ class FixedAutoReactsMod(loader.Module):
             # Поиск по ID
             if chat_identifier in self.chats:
                 del self.chats[chat_identifier]
-                self._db.set("FixedAutoReacts", "chats", self.chats)
+                self._db.set("WorkingAutoReacts", "chats", self.chats)
                 response = f"✅ Чат {chat_identifier} удален"
                 if self.settings["show_channel_info"]:
                     response += f"\n📢 Канал: @modulesTheHika"
@@ -144,7 +227,7 @@ class FixedAutoReactsMod(loader.Module):
             for chat_id, settings in list(self.chats.items()):
                 if settings.get("original_identifier") == chat_identifier:
                     del self.chats[chat_id]
-                    self._db.set("FixedAutoReacts", "chats", self.chats)
+                    self._db.set("WorkingAutoReacts", "chats", self.chats)
                     response = f"✅ Чат {chat_identifier} удален"
                     if self.settings["show_channel_info"]:
                         response += f"\n📢 Канал: @modulesTheHika"
@@ -158,7 +241,7 @@ class FixedAutoReactsMod(loader.Module):
                     chat_id = str(getattr(chat, 'id', None))
                     if chat_id and chat_id in self.chats:
                         del self.chats[chat_id]
-                        self._db.set("FixedAutoReacts", "chats", self.chats)
+                        self._db.set("WorkingAutoReacts", "chats", self.chats)
                         response = f"✅ Чат {chat_identifier} удален"
                         if self.settings["show_channel_info"]:
                             response += f"\n📢 Канал: @modulesTheHika"
@@ -191,35 +274,6 @@ class FixedAutoReactsMod(loader.Module):
             
         except Exception as e:
             await message.edit(f"❌ Ошибка: {str(e)}")
-        
-    async def watcher(self, message: Message):
-        try:
-            chat_id = self.get_chat_id(message)
-            if not chat_id or chat_id not in self.chats:
-                return
-                
-            chat_settings = self.chats[chat_id]
-            
-            # Инициализация счетчика
-            if "counter" not in chat_settings:
-                chat_settings["counter"] = 0
-                
-            chat_settings["counter"] += 1
-            
-            # Проверка интервала
-            if chat_settings["counter"] >= chat_settings["interval"]:
-                try:
-                    await message.react(chat_settings["emoji"])
-                    chat_settings["counter"] = 0
-                except Exception as e:
-                    print(f"Ошибка реакции: {e}")
-                
-            # Сохранение обновлений
-            self.chats[chat_id] = chat_settings
-            self._db.set("FixedAutoReacts", "chats", self.chats)
-            
-        except Exception as e:
-            print(f"Ошибка в watcher: {e}")
 
     async def channelcmd(self, message: Message):
         """Информация о канале: .channel"""
@@ -227,5 +281,6 @@ class FixedAutoReactsMod(loader.Module):
             "📢 Телеграм канал модулей: @modulesTheHika\n"
             "👤 Создатель модуля: @vipqlkxn\n"
             "🚀 Подпишись для новых модулей!\n"
-            f"⚙️ Текущий интервал: {self.settings['default_interval']} сообщений"
+            f"⚙️ Текущий интервал: {self.settings['default_interval']} сообщений\n"
+            "✅ Используется SendReactionRequest для реакций"
         )
