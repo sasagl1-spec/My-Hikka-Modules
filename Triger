@@ -1,0 +1,216 @@
+from hikka import loader, utils
+from telethon.tl.types import Message
+import random
+import time
+import re
+
+@loader.tds
+class AutoRPTriggersMod(loader.Module):
+    """Модуль авто-РП триггеров с реакциями на сообщения"""
+    
+    strings = {"name": "AutoRPTriggers"}
+    
+    def __init__(self):
+        self.triggers = {
+            # Приветствия
+            r"(?i)(привет|hello|hi|хай|здаров|ку)": ["Привет! 👋", "Здарова! 😎", "И тебе привет! 🎉", "Приветик! ✨"],
+            r"(?i)(как дела|how are you|как ты)": ["Норм! 👍", "Отлично! 😊", "Лучше всех! 🚀", "Всё супер! 💫"],
+            r"(?i)(спокойной ночи|good night|ночи)": ["Спокойной ночи! 🌙", "Сладких снов! 💤", "Доброй ночи! 😴"],
+            
+            # Реакции на действия
+            r"(?i)(обнял|обнять|hug)": ["💞 {from} обнимает {to}", "🤗 {from} крепко обнимает {to}", "🫂 {from} обнимает {to}"],
+            r"(?i)(ударил|ударить|hit|punch)": ["👊 {from} бьет {to}", "🤕 {from} наносит удар {to}", "🥊 {from} ударяет {to}"],
+            r"(?i)(поцеловал|поцеловать|kiss)": ["😘 {from} целует {to}", "💋 {from} нежно целует {to}", "😚 {from} целует {to}"],
+            r"(?i)(погладил|погладить|pat)": ["🐾 {from} гладит {to}", "✨ {from} нежно гладит {to}", "👐 {from} гладит {to}"],
+            r"(?i)(укусил|укусить|bite)": ["😈 {from} кусает {to}", "🦷 {from} больно кусает {to}", "🐺 {from} кусает {to}"],
+            r"(?i)(выпил|выпить|drink)": ["🍷 {from} пьет с {to}", "🍻 {from} выпивает за здоровье {to}", "🥂 {from} пьет с {to}"],
+            
+            # Эмоции
+            r"(?i)(смех|смешно|ха-ха|lol)": ["😂 Смешно!", "🤣 Умора!", "😆 Ха-ха!"],
+            r"(?i)(грустно|sad|печаль)": ["😢 Не грусти!", "🤗 Обниму!", "☹️ Всё наладится!"],
+            r"(?i)(злой|злюсь|angry)": ["😠 Успокойся!", "👊 Расслабься!", "🤬 Не злись!"],
+            
+            # Вопросы
+            r"(?i)(как жизнь|how life|чего как)": ["Жизнь прекрасна! 🌈", "Всё пучком! 👍", "Отлично! 🚀"],
+            r"(?i)(что делаешь|what doing|чем занят)": ["Отвечаю в чате! 💬", "Общаюсь с тобой! 😊", "Работаю! 💻"],
+            
+            # Комплименты
+            r"(?i)(красивый|красивая|handsome)": ["Самый красивый! 😍", "Очень красиво! 💖", "Прелесть! ✨"],
+            r"(?i)(умный|умная|smart)": ["Очень умно! 🧠", "Гениально! 💡", "Умница! 🌟"],
+            
+            # Еда
+            r"(?i)(вкусно|вкусный|yummy)": ["🍕 Вкуснятина!", "🍔 Аппетитно!", "🍰 Вкусно!"],
+            r"(?i)(голоден|голодна|hungry)": ["🍖 Поешь!", "🍜 Перекуси!", "🥘 Пора кушать!"],
+            
+            # Время
+            r"(?i)(доброе утро|good morning|утра)": ["☀️ Доброе утро!", "🌅 Утра доброго!", "🌞 Привет!"],
+            r"(?i)(добрый день|good afternoon|дня)": ["🌇 Добрый день!", "🌞 Привет!", "💼 Здравствуй!"],
+            r"(?i)(добрый вечер|good evening|вечера)": ["🌆 Добрый вечер!", "🌃 Привет!", "🎇 Здравствуй!"],
+            
+            # Прощания
+            r"(?i)(пока|bye|до свидания)": ["👋 Пока!", "😊 До встречи!", "🌟 Увидимся!"],
+            
+            # Игры
+            r"(?i)(играть|play|game)": ["🎮 Во что играем?", "🕹️ Давай играть!", "👾 Игровой режим!"],
+            
+            # Музыка
+            r"(?i)(музыка|music|песня)": ["🎵 Включаю музыку!", "🎶 Любимый трек?", "🎧 Слушаем!"],
+            
+            # Погода
+            r"(?i)(погода|weather|дождь)": ["🌞 Солнечно!", "🌧️ Дождик!", "❄️ Снежок!"],
+            
+            # Любовь
+            r"(?i)(люблю|love|обожаю)": ["💖 И я тебя!", "😍 Взаимно!", "💘 Люблю!"],
+            
+            # Спам
+            r"(?i)(спам|spam|флуд)": ["🚫 Нет спаму!", "⛔ Стоп флуд!", "🔇 Тише!"],
+        }
+        self.cooldowns = {}
+        self.user_cooldowns = {}
+        
+    async def client_ready(self, client, db):
+        self._db = db
+        self._client = client
+        self.settings = self._db.get("AutoRPTriggers", "settings", {
+            "global_cooldown": 10,
+            "user_cooldown": 30,
+            "enabled": True,
+            "probability": 80
+        })
+    
+    async def rptogglecmd(self, message: Message):
+        """Включить/выключить авто-РП: .rptoggle <on/off>"""
+        args = utils.get_args_raw(message).lower()
+        if args == "on":
+            self.settings["enabled"] = True
+            await message.edit("✅ Авто-РП реакции включены")
+        elif args == "off":
+            self.settings["enabled"] = False
+            await message.edit("❌ Авто-РП реакции выключены")
+        else:
+            status = "включены" if self.settings["enabled"] else "выключены"
+            await message.edit(f"📊 Авто-РП: {status}\nИспользуй: .rptoggle on/off")
+        
+        self._db.set("AutoRPTriggers", "settings", self.settings)
+    
+    async def rpprobcmd(self, message: Message):
+        """Изменить вероятность ответа: .rpprob <1-100>"""
+        args = utils.get_args_raw(message)
+        if not args.isdigit() or not (1 <= int(args) <= 100):
+            return await message.edit("❌ Укажи число от 1 до 100")
+        
+        self.settings["probability"] = int(args)
+        self._db.set("AutoRPTriggers", "settings", self.settings)
+        await message.edit(f"✅ Вероятность ответа: {args}%")
+    
+    async def rpcooldowncmd(self, message: Message):
+        """Изменить кулдауны: .rpcooldown <глобальный> <пользовательский>"""
+        args = utils.get_args_raw(message).split()
+        if len(args) != 2 or not all(arg.isdigit() for arg in args):
+            return await message.edit("❌ Формат: .rpcooldown <глобальный> <пользовательский>")
+        
+        self.settings["global_cooldown"] = int(args[0])
+        self.settings["user_cooldown"] = int(args[1])
+        self._db.set("AutoRPTriggers", "settings", self.settings)
+        await message.edit(f"✅ Кулдауны: глобальный {args[0]}сек, пользовательский {args[1]}сек")
+    
+    async def rplistcmd(self, message: Message):
+        """Список триггеров: .rplist"""
+        categories = {}
+        for pattern in self.triggers.keys():
+            category = pattern.split('|')[0].replace('(?i)(', '').replace(')', '')
+            if category not in categories:
+                categories[category] = []
+            categories[category].append(pattern)
+        
+        response = "🎭 Доступные РП триггеры:\n\n"
+        for category, patterns in categories.items():
+            response += f"🔹 {category}:\n"
+            for pattern in patterns[:3]:  # Показываем первые 3 из каждой категории
+                clean_pattern = pattern.replace('(?i)(', '').replace(')', '').split('|')[0]
+                response += f"   • {clean_pattern}\n"
+            if len(patterns) > 3:
+                response += f"   • ... и ещё {len(patterns)-3}\n"
+            response += "\n"
+        
+        await message.edit(response)
+    
+    async def watcher(self, message: Message):
+        """Обработчик всех сообщений"""
+        if not self.settings["enabled"] or not message.text or message.out:
+            return
+        
+        current_time = time.time()
+        chat_id = message.chat_id
+        user_id = message.sender_id
+        
+        # Проверка глобального кулдауна
+        if chat_id in self.cooldowns and current_time - self.cooldowns[chat_id] < self.settings["global_cooldown"]:
+            return
+        
+        # Проверка пользовательского кулдауна
+        user_key = f"{chat_id}_{user_id}"
+        if user_key in self.user_cooldowns and current_time - self.user_cooldowns[user_key] < self.settings["user_cooldown"]:
+            return
+        
+        # Проверка вероятности
+        if random.randint(1, 100) > self.settings["probability"]:
+            return
+        
+        text = message.text.lower()
+        
+        # Поиск совпадений с триггерами
+        for pattern, responses in self.triggers.items():
+            if re.search(pattern, text):
+                response = random.choice(responses)
+                
+                # Замена плейсхолдеров
+                if "{from}" in response and "{to}" in response:
+                    from_name = await self.get_user_name(user_id)
+                    to_name = await self.get_user_name((await message.get_reply_message()).sender_id) if message.is_reply else "всех"
+                    response = response.format(from=from_name, to=to_name)
+                
+                # Отправка ответа
+                await message.reply(response)
+                
+                # Обновление кулдаунов
+                self.cooldowns[chat_id] = current_time
+                self.user_cooldowns[user_key] = current_time
+                break
+    
+    async def get_user_name(self, user_id: int):
+        """Получение имени пользователя"""
+        try:
+            user = await self._client.get_entity(user_id)
+            return user.first_name or f"user_{user_id}"
+        except:
+            return f"user_{user_id}"
+    
+    async def rpaddcmd(self, message: Message):
+        """Добавить свой триггер: .rpadd <триггер> <ответ>"""
+        args = utils.get_args_raw(message)
+        if not args or ' ' not in args:
+            return await message.edit("❌ Формат: .rpadd <триггер> <ответ>")
+        
+        trigger, response = args.split(' ', 1)
+        trigger_pattern = f"(?i)({trigger.lower()})"
+        
+        if trigger_pattern in self.triggers:
+            self.triggers[trigger_pattern].append(response)
+        else:
+            self.triggers[trigger_pattern] = [response]
+        
+        await message.edit(f"✅ Триггер добавлен: {trigger} → {response}")
+    
+    async def rpstatcmd(self, message: Message):
+        """Статистика модуля: .rpstat"""
+        total_triggers = sum(len(responses) for responses in self.triggers.values())
+        await message.edit(
+            f"📊 Статистика РП модуля:\n"
+            f"• Всего триггеров: {total_triggers}\n"
+            f"• Категорий: {len(self.triggers)}\n"
+            f"• Вероятность: {self.settings['probability']}%\n"
+            f"• Статус: {'ВКЛ' if self.settings['enabled'] else 'ВЫКЛ'}\n"
+            f"• Глобальный CD: {self.settings['global_cooldown']}сек\n"
+            f"• Пользовательский CD: {self.settings['user_cooldown']}сек"
+        )
