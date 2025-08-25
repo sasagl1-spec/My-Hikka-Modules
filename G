@@ -1,0 +1,33 @@
+from hikka import loader, utils
+from telethon.tl import types
+
+@loader.tds
+class NextPostMod(loader.Module):
+    """Автоматически нажимает кнопку 'Следующий пост'"""
+    
+    strings = {"name": "NextPostClicker"}
+    
+    async def nextpostcmd(self, message):
+        """Найти и нажать кнопку 'Следующий пост' в последнем сообщении"""
+        async for msg in self._client.iter_messages(
+            message.chat_id, 
+            limit=10
+        ):
+            if not msg.buttons:
+                continue
+                
+            for row in msg.buttons:
+                for button in row:
+                    if isinstance(button, types.KeyboardButtonCallback):
+                        if "следующий пост" in button.text.lower():
+                            await self._client(
+                                types.GetBotCallbackAnswerRequest(
+                                    peer=msg.chat_id,
+                                    msg_id=msg.id,
+                                    data=button.data
+                                )
+                            )
+                            await utils.answer(message, "✅ Кнопка 'Следующий пост' нажата")
+                            return
+            
+        await utils.answer(message, "❌ Кнопка не найдена в последних сообщениях")
