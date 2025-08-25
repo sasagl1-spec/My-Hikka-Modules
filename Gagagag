@@ -1,0 +1,37 @@
+from hikka import loader, utils
+from telethon.tl import types
+import re
+
+@loader.tds
+class GramAutoClicker(loader.Module):
+    """Автокликер для PR GRAM | DRAGON"""
+    
+    strings = {"name": "GramAutoClicker"}
+    
+    async def nextcmd(self, message):
+        """Автоматически найти и нажать 'Следующий пост'"""
+        async for msg in self._client.iter_messages(
+            message.chat_id, 
+            limit=20
+        ):
+            if not msg.buttons:
+                continue
+                
+            for row in msg.buttons:
+                for button in row:
+                    if hasattr(button, 'text') and re.search(r'следующий пост|next', button.text, re.IGNORECASE):
+                        if isinstance(button, types.KeyboardButtonCallback):
+                            await self._client(
+                                types.GetBotCallbackAnswerRequest(
+                                    peer=msg.chat_id,
+                                    msg_id=msg.id,
+                                    data=button.data
+                                )
+                            )
+                            await utils.answer(message, "✅ Кнопка нажата!")
+                            return
+                        elif isinstance(button, types.KeyboardButtonUrl):
+                            await utils.answer(message, f"🔗 Это URL-кнопка: {button.url}")
+                            return
+            
+        await utils.answer(message, "❌ Кнопка не найдена")
