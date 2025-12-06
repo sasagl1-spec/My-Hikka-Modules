@@ -1,32 +1,33 @@
 # meta developer: @kiminaiq
 # meta pic: https://img.icons8.com/color/48/000000/money-bag.png
-# meta description: Публикация курсов USD и TON в ₽ в канал @priceDollarTon
+# meta description: Публикация курсов USD и TON в ₽ в канал @priceDollarTon (время МСК)
 # scope: hikka_only
 # scope: hikka_min 1.6.0
 
 import aiohttp
 import asyncio
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from .. import loader, utils
 import logging
 
 logger = logging.getLogger(__name__)
 
 @loader.tds
-class PricePosterSimple(loader.Module):
-    """Публикация курсов USD и TON в ₽ в @priceDollarTon"""
+class PricePosterMSK(loader.Module):
+    """Публикация курсов USD и TON в ₽ в @priceDollarTon (время МСК)"""
     
     strings = {
-        "name": "PricePosterSimple",
-        "started": "✅ <b>Бот запущен!</b>\n📢 Канал: @priceDollarTon\n⏱ Каждые 3 минуты\n💵 USD в RUB\n💎 TON в RUB",
+        "name": "PricePosterMSK",
+        "started": "✅ <b>Бот запущен!</b>\n📢 Канал: @priceDollarTon\n⏱ Каждые 3 минуты\n💵 USD → RUB\n💎 TON → RUB",
         "stopped": "⏹️ <b>Бот остановлен</b>",
         "already_running": "⚠️ <b>Бот уже работает</b>",
         "not_running": "📭 <b>Бот не запущен</b>",
         "test_sent": "📤 <b>Тестовый пост отправлен</b>",
-        "status": "🔄 <b>Статус:</b> {}\n⏰ <b>Последнее:</b> {}",
+        "status": "🔄 <b>Статус:</b> {}\n⏰ <b>Последнее:</b> {}\n💵 <b>USD:</b> {}₽\n💎 <b>TON:</b> {}₽",
         "error": "❌ <b>Ошибка:</b> {}",
-        "updating": "🔄 Получаю курсы..."
+        "updating": "🔄 Получаю курсы...",
+        "no_price": "Нет данных"
     }
     
     def __init__(self):
@@ -35,13 +36,14 @@ class PricePosterSimple(loader.Module):
         self.last_update = None
         self.session = None
         self.last_usd_price = None
-        self.last_ton_price = None
+        self.last_ton_usd_price = None  # Добавили сохранение цены TON в USD
+        self.last_ton_rub_price = None
     
     async def client_ready(self, client, db):
         self.client = client
         self.db = db
         self.session = aiohttp.ClientSession()
-        logger.info("PricePosterSimple загружен")
+        logger.info("PricePosterMSK загружен")
     
     @loader.command(
         ru_doc="Запустить публикацию цен в @priceDollarTon",
@@ -85,10 +87,10 @@ class PricePosterSimple(loader.Module):
         """Тестовый пост"""
         await utils.answer(message, self.strings("updating"))
         try:
-            usd_rub, ton_rub = await self._get_prices()
+            usd_rub, ton_usd, ton_rub = await self._get_all_prices()
             
-            if usd_rub and ton_rub:
-                post = self._format_post(usd_rub, ton_rub)
+            if usd_rub and ton_usd and ton_rub:
+                post = self._format_post(usd_rub, ton_usd, ton_rub)
                 
                 # Отправляем в канал
                 await self.client.send_message(
@@ -116,14 +118,15 @@ class PricePosterSimple(loader.Module):
         
         last_time = "—"
         if self.last_update:
-            last_time = datetime.fromtimestamp(self.last_update).strftime("%H:%M:%S")
+            last_time = self._get_msk_time_str(self.last_update)
         
-        info = f"{status}\n⏰ Последнее: {last_time}"
+        usd_info = f"{self.last_usd_price:.2f}₽" if self.last_usd_price else self.strings("no_price")
+        ton_info = f"{self.last_ton_rub_price:.2f}₽" if self.last_ton_rub_price else self.strings("no_price")
         
-        if self.last_usd_price and self.last_ton_price:
-            info += f"\n\n💵 Текущий USD: {self.last_usd_price:.2f}₽\n"
-            info += f"💎 Текущий TON: {self.last_ton_price:.2f}₽"
+        if self.last_ton_usd_price:
+            ton_info += f" (${self.last_ton_usd_price:.4f})"
         
+        info = self.strings("status").format(status, last_time, usd_info, ton_info)
         await utils.answer(message, info)
     
     @loader.command(
@@ -134,10 +137,10 @@ class PricePosterSimple(loader.Module):
         """Обновить"""
         await utils.answer(message, self.strings("updating"))
         try:
-            usd_rub, ton_rub = await self._get_prices()
+            usd_rub, ton_usd, ton_rub = await self._get_all_prices()
             
-            if usd_rub and ton_rub:
-                post = self._format_post(usd_rub, ton_rub)
+            if usd_rub and ton_usd and ton_rub:
+                post = self._format_post(usd_rub, ton_usd, ton_rub)
                 await message.respond(post, parse_mode='HTML')
             else:
                 await utils.answer(message, "❌ Ошибка получения данных")
@@ -149,16 +152,17 @@ class PricePosterSimple(loader.Module):
         """Основной цикл публикации"""
         while self.is_running:
             try:
-                # Получаем цены
-                usd_rub, ton_rub = await self._get_prices()
+                # Получаем все цены
+                usd_rub, ton_usd, ton_rub = await self._get_all_prices()
                 
-                if usd_rub and ton_rub:
+                if usd_rub and ton_usd and ton_rub:
                     # Сохраняем для статуса
                     self.last_usd_price = usd_rub
-                    self.last_ton_price = ton_rub
+                    self.last_ton_usd_price = ton_usd
+                    self.last_ton_rub_price = ton_rub
                     
                     # Форматируем пост
-                    post = self._format_post(usd_rub, ton_rub)
+                    post = self._format_post(usd_rub, ton_usd, ton_rub)
                     
                     # Отправляем в канал
                     await self.client.send_message(
@@ -170,20 +174,20 @@ class PricePosterSimple(loader.Module):
                     # Обновляем время
                     self.last_update = time.time()
                     
-                    logger.info(f"Пост отправлен | USD: {usd_rub:.2f}₽, TON: {ton_rub:.2f}₽")
+                    logger.info(f"Пост отправлен | USD: {usd_rub:.2f}₽, TON: {ton_rub:.2f}₽ (${ton_usd:.4f})")
                 
                 # Ждем 3 минуты (180 секунд)
-                for _ in range(180):
+                for i in range(180):
                     if not self.is_running:
                         break
                     await asyncio.sleep(1)
                     
             except Exception as e:
                 logger.error(f"Ошибка в цикле: {e}")
-                await asyncio.sleep(30)  # Ждем перед повторной попыткой
+                await asyncio.sleep(30)
     
-    async def _get_prices(self):
-        """Получение курсов USD/RUB и TON/RUB"""
+    async def _get_all_prices(self):
+        """Получение всех курсов"""
         try:
             # Получаем USD/RUB
             usd_rub = await self._get_usd_rub()
@@ -194,80 +198,105 @@ class PricePosterSimple(loader.Module):
             if usd_rub and ton_usd:
                 # Конвертируем TON в RUB
                 ton_rub = ton_usd * usd_rub
-                return usd_rub, ton_rub
+                return usd_rub, ton_usd, ton_rub
             
-            return None, None
+            return None, None, None
             
         except Exception as e:
             logger.error(f"Ошибка получения цен: {e}")
-            return None, None
+            return None, None, None
     
     async def _get_usd_rub(self):
         """Получение курса USD/RUB"""
-        try:
-            # Первый источник
-            url = "https://api.frankfurter.app/latest?from=USD&to=RUB"
-            async with self.session.get(url, timeout=5) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    return data['rates']['RUB']
-        except:
-            pass
+        sources = [
+            "https://api.frankfurter.app/latest?from=USD&to=RUB",
+            "https://api.exchangerate-api.com/v4/latest/USD",
+            "https://api.currencyapi.com/v3/latest?apikey=cur_live_123&currencies=RUB&base_currency=USD"
+        ]
         
-        # Второй источник
-        try:
-            url = "https://api.exchangerate-api.com/v4/latest/USD"
-            async with self.session.get(url, timeout=5) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    return data['rates']['RUB']
-        except:
-            pass
+        for url in sources:
+            try:
+                async with self.session.get(url, timeout=5) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        
+                        # Извлекаем курс в зависимости от API
+                        if "frankfurter" in url:
+                            return data['rates']['RUB']
+                        elif "exchangerate-api" in url:
+                            return data['rates']['RUB']
+                        elif "currencyapi" in url:
+                            return data['data']['RUB']['value']
+            except:
+                continue
         
         return None
     
     async def _get_ton_usd(self):
         """Получение курса TON/USD"""
-        try:
-            # Binance API
-            url = "https://api.binance.com/api/v3/ticker/price?symbol=TONUSDT"
-            async with self.session.get(url, timeout=5) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    return float(data['price'])
-        except:
-            pass
+        sources = [
+            ("https://api.binance.com/api/v3/ticker/price?symbol=TONUSDT", "binance"),
+            ("https://api.coingecko.com/api/v3/simple/price?ids=the-open-network&vs_currencies=usd", "coingecko"),
+            ("https://api.bybit.com/v5/market/tickers?category=spot&symbol=TONUSDT", "bybit")
+        ]
         
-        # CoinGecko API
-        try:
-            url = "https://api.coingecko.com/api/v3/simple/price"
-            params = {"ids": "the-open-network", "vs_currencies": "usd"}
-            async with self.session.get(url, params=params, timeout=5) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    return data['the-open-network']['usd']
-        except:
-            pass
+        for url, source in sources:
+            try:
+                async with self.session.get(url, timeout=5) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        
+                        if source == "binance":
+                            return float(data['price'])
+                        elif source == "coingecko":
+                            return data['the-open-network']['usd']
+                        elif source == "bybit":
+                            return float(data['result']['list'][0]['lastPrice'])
+            except:
+                continue
         
         return None
     
-    def _format_post(self, usd_rub, ton_rub):
+    def _get_msk_time(self):
+        """Получение текущего времени по МСК"""
+        # МСК = UTC+3
+        utc_now = datetime.utcnow()
+        msk_time = utc_now + timedelta(hours=3)
+        return msk_time
+    
+    def _get_msk_time_str(self, timestamp=None):
+        """Получение времени МСК в строковом формате"""
+        if timestamp:
+            utc_time = datetime.utcfromtimestamp(timestamp)
+            msk_time = utc_time + timedelta(hours=3)
+        else:
+            msk_time = self._get_msk_time()
+        
+        return msk_time.strftime("%H:%M МСК")
+    
+    def _format_number(self, number):
+        """Форматирование числа"""
+        if number.is_integer():
+            return f"{int(number):,}".replace(",", " ")
+        else:
+            return f"{number:,.2f}".replace(",", " ").replace(".", ",")
+    
+    def _format_post(self, usd_rub, ton_usd, ton_rub):
         """Форматирование поста в нужном формате"""
         # Форматируем числа
-        usd_formatted = f"{usd_rub:,.2f}".replace(",", " ").replace(".", ",")
-        ton_formatted = f"{ton_rub:,.2f}".replace(",", " ").replace(".", ",")
+        usd_formatted = self._format_number(usd_rub)
+        ton_formatted = self._format_number(ton_rub)
         
-        # Убираем копейки если целое число
-        if ton_rub.is_integer():
-            ton_formatted = f"{int(ton_rub):,}".replace(",", " ")
-        
-        # Текущее время
-        time_now = datetime.now().strftime("%H:%M")
+        # Получаем время МСК
+        msk_time = self._get_msk_time_str()
         
         # Формируем пост
         post = f"💵 USD: <b>{usd_formatted}₽</b>\n"
         post += f"💎 TON: <b>{ton_formatted}₽</b>\n\n"
-        post += f"<i>🕐 {time_now} | @priceDollarTon</i>"
+        post += f"<i>🕐 {msk_time} | @priceDollarTon</i>"
+        
+        # Для отладки можно добавить цену TON в USD в комментарий
+        # post += f"\n<code>TON/USD: ${ton_usd:.4f}</code>"
         
         return post
     
