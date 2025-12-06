@@ -1,6 +1,6 @@
 # meta developer: @kiminaiq
-# meta pic: https://img.icons8.com/color/48/000000/text.png
-# meta description: Автозамена текста по шаблонам
+# meta pic: https://img.icons8.com/color/48/000000/auto-replace.png
+# meta description: Автоматическая замена рв на реквизиты
 # scope: hikka_only
 # scope: hikka_min 1.6.0
 
@@ -11,206 +11,248 @@ import re
 logger = logging.getLogger(__name__)
 
 @loader.tds
-class TextReplacerMod(loader.Module):
-    """Автозамена текста по шаблонам"""
+class AutoReplacerMod(loader.Module):
+    """Автоматическая замена рв в сообщениях"""
     
     strings = {
-        "name": "TextReplacer",
-        "help": "📝 <b>Автозамена текста</b>\n\n"
-                "<b>Команды:</b>\n"
-                ".replace <текст> - заменить текст по шаблонам\n"
-                ".addtemplate <шаблон> <замена> - добавить шаблон\n"
-                ".templates - показать все шаблоны\n"
-                ".removetemplate <номер> - удалить шаблон\n"
-                ".testreplace <текст> - тест замены\n",
-        "replaced": "✅ <b>Текст заменен:</b>\n{}",
-        "no_text": "❌ <b>Укажите текст для замены</b>",
-        "template_added": "✅ <b>Шаблон добавлен:</b>\n<code>{}</code> → <code>{}</code>",
-        "template_exists": "⚠️ <b>Шаблон уже существует</b>",
-        "templates_list": "📋 <b>Шаблоны замены:</b>\n{}",
-        "no_templates": "📭 <b>Нет сохраненных шаблонов</b>",
-        "template_removed": "🗑️ <b>Шаблон удален:</b> {}",
-        "invalid_template_num": "❌ <b>Неверный номер шаблона</b>",
-        "test_result": "🧪 <b>Тест замены:</b>\n"
+        "name": "AutoReplacer",
+        "help": "🔄 <b>Автоматическая замена</b>\n\n"
+                "🔧 <b>Настройки:</b>\n"
+                ".autoon - Включить авто-замену\n"
+                ".autooff - Выключить авто-замену\n"
+                ".autostatus - Статус\n"
+                ".addauto <слово> <замена> - Добавить слово\n"
+                ".listauto - Список замен\n"
+                ".delauto <номер> - Удалить замену\n"
+                ".testauto <текст> - Тест замены\n\n"
+                "📝 <b>По умолчанию:</b>\n"
+                "'рв' → '+79902136543 ПСБ Банк\\nВасилий К'",
+        "enabled": "✅ <b>Авто-замена включена</b>",
+        "disabled": "⏹️ <b>Авто-замена выключена</b>",
+        "already_enabled": "⚠️ <b>Авто-замена уже включена</b>",
+        "already_disabled": "⚠️ <b>Авто-замена уже выключена</b>",
+        "status_on": "🟢 <b>Авто-замена: ВКЛЮЧЕНА</b>",
+        "status_off": "🔴 <b>Авто-замена: ВЫКЛЮЧЕНА</b>",
+        "word_added": "✅ <b>Добавлено:</b> <code>{}</code> → <code>{}</code>",
+        "word_exists": "⚠️ <b>Слово уже существует</b>",
+        "word_removed": "🗑️ <b>Удалено:</b> <code>{}</code>",
+        "no_words": "📭 <b>Нет сохраненных замен</b>",
+        "words_list": "📋 <b>Список замен:</b>\n{}",
+        "invalid_number": "❌ <b>Неверный номер</b>",
+        "test_result": "🧪 <b>Тест авто-замены:</b>\n"
                        "<b>Исходный:</b> {}\n"
-                       "<b>Результат:</b> {}"
-    }
-    
-    strings_ru = {
-        "help": "📝 <b>Автозамена текста</b>\n\n"
-                "<b>Команды:</b>\n"
-                ".replace <текст> - заменить текст по шаблонам\n"
-                ".addtemplate <шаблон> <замена> - добавить шаблон\n"
-                ".templates - показать все шаблоны\n"
-                ".removetemplate <номер> - удалить шаблон\n"
-                ".testreplace <текст> - тест замены\n",
-        "replaced": "✅ <b>Текст заменен:</b>\n{}",
-        "no_text": "❌ <b>Укажите текст для замены</b>",
-        "template_added": "✅ <b>Шаблон добавлен:</b>\n<code>{}</code> → <code>{}</code>",
-        "template_exists": "⚠️ <b>Шаблон уже существует</b>",
-        "templates_list": "📋 <b>Шаблоны замены:</b>\n{}",
-        "no_templates": "📭 <b>Нет сохраненных шаблонов</b>",
-        "template_removed": "🗑️ <b>Шаблон удален:</b> {}",
-        "invalid_template_num": "❌ <b>Неверный номер шаблона</b>",
-        "test_result": "🧪 <b>Тест замены:</b>\n"
-                       "<b>Исходный:</b> {}\n"
-                       "<b>Результат:</b> {}"
+                       "<b>После замены:</b> {}",
+        "replaced_info": "🔄 <i>Сообщение автоматически заменено</i>",
+        "no_text": "❌ <b>Укажите текст для теста</b>"
     }
     
     def __init__(self):
-        self.templates = []
-        self.default_templates = [
+        self.replacements = [
             ("рв", "+79902136543 ПСБ Банк\nВасилий К"),
             ("рф", "🇷🇺 Российская Федерация"),
             ("спс", "Спасибо!"),
-            ("пж", "Пожалуйста"),
-            ("ок", "Окей"),
-            ("мб", "Может быть"),
-            ("нг", "С Новым Годом!"),
-            ("др", "С Днем Рождения!"),
+            ("пж", "Пожалуйста")
         ]
+        self.enabled = True  # По умолчанию включено
         
     async def client_ready(self, client, db):
         self.client = client
         self.db = db
-        # Загружаем шаблоны из базы данных
-        self.templates = self.db.get(__name__, "templates", [])
         
-        # Добавляем дефолтные шаблоны если их нет
-        if not self.templates:
-            self.templates = self.default_templates.copy()
-            self._save_templates()
+        # Загружаем настройки из базы данных
+        saved_replacements = self.db.get(__name__, "replacements", None)
+        if saved_replacements:
+            self.replacements = saved_replacements
         
-        logger.info(f"TextReplacer загружен, шаблонов: {len(self.templates)}")
+        saved_enabled = self.db.get(__name__, "enabled", None)
+        if saved_enabled is not None:
+            self.enabled = saved_enabled
+        
+        logger.info(f"AutoReplacer загружен, замен: {len(self.replacements)}, статус: {'ВКЛ' if self.enabled else 'ВЫКЛ'}")
     
-    @loader.command(
-        ru_doc="<текст> - Заменить текст по шаблонам",
-        en_doc="<text> - Replace text using templates"
-    )
-    async def replacecmd(self, message):
-        """Заменить текст"""
-        text = utils.get_args_raw(message)
-        
-        if not text:
-            await utils.answer(message, self.strings("no_text"))
+    async def watcher(self, message):
+        """Наблюдатель за сообщениями"""
+        # Проверяем, что авто-замена включена
+        if not self.enabled:
             return
         
-        # Выполняем замену
-        replaced_text = self._apply_replacements(text)
+        # Проверяем, что это наше сообщение и это текст
+        if not message.out or not message.text:
+            return
         
-        # Отправляем результат
-        await utils.answer(
-            message,
-            self.strings("replaced").format(replaced_text)
-        )
+        # Исключаем команды модуля из обработки
+        if message.text.startswith(('.autoon', '.autooff', '.autostatus', 
+                                   '.addauto', '.listauto', '.delauto', '.testauto',
+                                   '.autohelp')):
+            return
         
-        logger.info(f"Текст заменен: '{text}' → '{replaced_text}'")
+        # Применяем замены
+        original_text = message.text
+        replaced_text = self._apply_auto_replace(original_text)
+        
+        # Если текст изменился, редактируем сообщение
+        if replaced_text != original_text:
+            try:
+                # Редактируем сообщение
+                await message.edit(replaced_text)
+                
+                # Отправляем уведомление (только себе)
+                await message.respond(self.strings("replaced_info"), reply_to=message.id)
+                
+                logger.info(f"Сообщение автоматически заменено: '{original_text}' → '{replaced_text}'")
+                
+            except Exception as e:
+                logger.error(f"Ошибка редактирования сообщения: {e}")
     
     @loader.command(
-        ru_doc="<шаблон> <замена> - Добавить шаблон замены",
-        en_doc="<pattern> <replacement> - Add replacement template"
+        ru_doc="Включить авто-замену",
+        en_doc="Enable auto-replace"
     )
-    async def addtemplatecmd(self, message):
-        """Добавить шаблон"""
+    async def autooncmd(self, message):
+        """Включить авто-замену"""
+        if self.enabled:
+            await utils.answer(message, self.strings("already_enabled"))
+            return
+        
+        self.enabled = True
+        self.db.set(__name__, "enabled", True)
+        
+        await utils.answer(message, self.strings("enabled"))
+        logger.info("Авто-замена включена")
+    
+    @loader.command(
+        ru_doc="Выключить авто-замену",
+        en_doc="Disable auto-replace"
+    )
+    async def autooffcmd(self, message):
+        """Выключить авто-замену"""
+        if not self.enabled:
+            await utils.answer(message, self.strings("already_disabled"))
+            return
+        
+        self.enabled = False
+        self.db.set(__name__, "enabled", False)
+        
+        await utils.answer(message, self.strings("disabled"))
+        logger.info("Авто-замена выключена")
+    
+    @loader.command(
+        ru_doc="Статус авто-замены",
+        en_doc="Auto-replace status"
+    )
+    async def autostatuscmd(self, message):
+        """Статус"""
+        status_text = self.strings["status_on"] if self.enabled else self.strings["status_off"]
+        
+        info = f"{status_text}\n\n"
+        info += f"📊 <b>Всего замен:</b> {len(self.replacements)}\n"
+        info += f"🔄 <b>Пример:</b> 'рв' → '{self.replacements[0][1][:30]}...'"
+        
+        await utils.answer(message, info)
+    
+    @loader.command(
+        ru_doc="<слово> <замена> - Добавить авто-замену",
+        en_doc="<word> <replacement> - Add auto-replacement"
+    )
+    async def addautocmd(self, message):
+        """Добавить авто-замену"""
         args = utils.get_args(message)
         
         if len(args) < 2:
             await utils.answer(
                 message,
-                "❌ <b>Формат:</b> .addtemplate <шаблон> <замена>\n"
-                "Пример: .addtemplate рв +79902136543 ПСБ Банк Василий К"
+                "❌ <b>Формат:</b> .addauto <слово> <замена>\n"
+                "Пример: .addauto адрес Москва, ул. Ленина, 1"
             )
             return
         
-        pattern = args[0]
+        word = args[0].lower()  # Приводим к нижнему регистру
         replacement = " ".join(args[1:])
         
-        # Проверяем, существует ли уже такой шаблон
-        for existing_pattern, _ in self.templates:
-            if existing_pattern == pattern:
-                await utils.answer(message, self.strings("template_exists"))
+        # Проверяем, существует ли уже такое слово
+        for existing_word, _ in self.replacements:
+            if existing_word == word:
+                await utils.answer(message, self.strings("word_exists"))
                 return
         
-        # Добавляем шаблон
-        self.templates.append((pattern, replacement))
-        self._save_templates()
+        # Добавляем замену в начало списка
+        self.replacements.insert(0, (word, replacement))
+        self._save_replacements()
         
         await utils.answer(
             message,
-            self.strings("template_added").format(pattern, replacement)
+            self.strings("word_added").format(word, replacement)
         )
-        
-        logger.info(f"Добавлен шаблон: '{pattern}' → '{replacement}'")
+        logger.info(f"Добавлена авто-замена: '{word}' → '{replacement}'")
     
     @loader.command(
-        ru_doc="Показать все шаблоны",
-        en_doc="Show all templates"
+        ru_doc="Список авто-замен",
+        en_doc="List auto-replacements"
     )
-    async def templatescmd(self, message):
-        """Показать шаблоны"""
-        if not self.templates:
-            await utils.answer(message, self.strings("no_templates"))
+    async def listautocmd(self, message):
+        """Список замен"""
+        if not self.replacements:
+            await utils.answer(message, self.strings("no_words"))
             return
         
-        templates_text = ""
-        for i, (pattern, replacement) in enumerate(self.templates, 1):
-            templates_text += f"{i}. <code>{pattern}</code> → <code>{replacement}</code>\n"
+        list_text = ""
+        for i, (word, replacement) in enumerate(self.replacements, 1):
+            # Обрезаем длинные замены
+            repl_preview = replacement[:40] + "..." if len(replacement) > 40 else replacement
+            list_text += f"{i}. <code>{word}</code> → <code>{repl_preview}</code>\n"
         
         await utils.answer(
             message,
-            self.strings("templates_list").format(templates_text)
+            self.strings("words_list").format(list_text)
         )
     
     @loader.command(
-        ru_doc="<номер> - Удалить шаблон",
-        en_doc="<number> - Remove template"
+        ru_doc="<номер> - Удалить авто-замену",
+        en_doc="<number> - Remove auto-replacement"
     )
-    async def removetemplatecmd(self, message):
-        """Удалить шаблон"""
+    async def delautocmd(self, message):
+        """Удалить авто-замену"""
         args = utils.get_args(message)
         
         if not args:
             await utils.answer(
                 message,
-                "❌ <b>Укажите номер шаблона для удаления</b>\n"
-                "Используйте .templates чтобы увидеть номера"
+                "❌ <b>Укажите номер для удаления</b>\n"
+                "Используйте .listauto чтобы увидеть номера"
             )
             return
         
         try:
-            template_num = int(args[0]) - 1
+            word_num = int(args[0]) - 1
             
-            if 0 <= template_num < len(self.templates):
-                removed_pattern, removed_replacement = self.templates.pop(template_num)
-                self._save_templates()
+            if 0 <= word_num < len(self.replacements):
+                removed_word, removed_replacement = self.replacements.pop(word_num)
+                self._save_replacements()
                 
                 await utils.answer(
                     message,
-                    self.strings("template_removed").format(
-                        f"<code>{removed_pattern}</code> → <code>{removed_replacement}</code>"
-                    )
+                    self.strings("word_removed"].format(removed_word)
                 )
-                
-                logger.info(f"Удален шаблон: '{removed_pattern}'")
+                logger.info(f"Удалена авто-замена: '{removed_word}'")
             else:
-                await utils.answer(message, self.strings("invalid_template_num"))
+                await utils.answer(message, self.strings("invalid_number"))
                 
         except ValueError:
-            await utils.answer(message, self.strings("invalid_template_num"))
+            await utils.answer(message, self.strings("invalid_number"))
     
     @loader.command(
-        ru_doc="<текст> - Протестировать замену без отправки",
-        en_doc="<text> - Test replacement without sending"
+        ru_doc="<текст> - Тест авто-замены",
+        en_doc="<text> - Test auto-replacement"
     )
-    async def testreplacecmd(self, message):
-        """Тест замены"""
+    async def testautocmd(self, message):
+        """Тест авто-замены"""
         text = utils.get_args_raw(message)
         
         if not text:
             await utils.answer(message, self.strings("no_text"))
             return
         
-        replaced_text = self._apply_replacements(text)
+        replaced_text = self._apply_auto_replace(text)
         
         await utils.answer(
             message,
@@ -218,77 +260,52 @@ class TextReplacerMod(loader.Module):
         )
     
     @loader.command(
-        ru_doc="Сбросить к дефолтным шаблонам",
-        en_doc="Reset to default templates"
+        ru_doc="Быстро добавить рв",
+        en_doc="Quick add рв"
     )
-    async def resettemplatescmd(self, message):
-        """Сбросить шаблоны"""
-        self.templates = self.default_templates.copy()
-        self._save_templates()
+    async def addrvautocmd(self, message):
+        """Быстро добавить рв"""
+        # Удаляем старый рв если есть
+        self.replacements = [(w, r) for w, r in self.replacements if w != "рв"]
+        
+        # Добавляем новый рв в начало
+        self.replacements.insert(0, ("рв", "+79902136543 ПСБ Банк\nВасилий К"))
+        self._save_replacements()
         
         await utils.answer(
             message,
-            f"✅ <b>Шаблоны сброшены к дефолтным</b>\n"
-            f"Всего шаблонов: {len(self.templates)}"
-        )
-        
-        logger.info("Шаблоны сброшены к дефолтным")
-    
-    @loader.command(
-        ru_doc="Добавить шаблон рв с вашими данными",
-        en_doc="Add рв template with your data"
-    )
-    async def addrvcmd(self, message):
-        """Добавить шаблон рв"""
-        # Проверяем, существует ли уже шаблон рв
-        for pattern, _ in self.templates:
-            if pattern == "рв":
-                await utils.answer(
-                    message,
-                    "⚠️ <b>Шаблон 'рв' уже существует</b>\n"
-                    "Используйте .removetemplate чтобы удалить его сначала"
-                )
-                return
-        
-        # Добавляем шаблон
-        self.templates.insert(0, ("рв", "+79902136543 ПСБ Банк\nВасилий К"))
-        self._save_templates()
-        
-        await utils.answer(
-            message,
-            "✅ <b>Шаблон 'рв' добавлен</b>\n"
-            "Теперь при вводе 'рв' будет заменяться на:\n"
+            "✅ <b>Добавлена авто-замена 'рв'</b>\n"
+            "Теперь при вводе 'рв' в любом сообщении:\n"
             "<code>+79902136543 ПСБ Банк\nВасилий К</code>"
         )
+        logger.info("Добавлена авто-замена 'рв'")
     
     @loader.command(
         ru_doc="Помощь по модулю",
         en_doc="Module help"
     )
-    async def replacehelpcmd(self, message):
+    async def autohelpcmd(self, message):
         """Помощь"""
         await utils.answer(message, self.strings("help"))
     
-    def _apply_replacements(self, text):
-        """Применить все замены к тексту"""
+    def _apply_auto_replace(self, text):
+        """Применить авто-замены к тексту"""
         result = text
         
-        # Сначала сортируем шаблоны по длине (от самых длинных к самым коротким)
-        # чтобы избежать конфликтов замен
-        sorted_templates = sorted(self.templates, key=lambda x: len(x[0]), reverse=True)
-        
-        for pattern, replacement in sorted_templates:
-            # Ищем точное совпадение слова
+        # Применяем замены в порядке списка
+        for word, replacement in self.replacements:
             # Используем регулярное выражение для поиска целых слов
-            pattern_regex = r'\b' + re.escape(pattern) + r'\b'
-            result = re.sub(pattern_regex, replacement, result, flags=re.IGNORECASE)
+            # Учитываем границы слов и регистр
+            pattern = r'\b' + re.escape(word) + r'\b'
+            result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
         
         return result
     
-    def _save_templates(self):
-        """Сохранить шаблоны в базу данных"""
-        self.db.set(__name__, "templates", self.templates)
+    def _save_replacements(self):
+        """Сохранить замены в базу данных"""
+        self.db.set(__name__, "replacements", self.replacements)
     
     async def on_unload(self):
         """Сохранение при выгрузке"""
-        self._save_templates()
+        self._save_replacements()
+        self.db.set(__name__, "enabled", self.enabled)
