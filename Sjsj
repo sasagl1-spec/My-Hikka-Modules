@@ -1,6 +1,6 @@
 # meta developer: @kiminaiq
-# meta pic: https://img.icons8.com/color/48/000000/durov.png
-# meta description: Парсинг цен из @DurovKursBot (исправленный под формат ответа)
+# meta pic: https://img.icons8.com/color/48/000000/telegram-app.png
+# meta description: Парсинг цен из @DurovKursBot по точному формату конвертации
 # scope: hikka_only
 # scope: hikka_min 1.6.0
 
@@ -14,61 +14,61 @@ import logging
 logger = logging.getLogger(__name__)
 
 @loader.tds
-class DurovKursParserFixed(loader.Module):
-    """Парсинг цен из @DurovKursBot (исправленный под реальный формат)"""
+class DurovPriceBot(loader.Module):
+    """Парсинг цен из @DurovKursBot с конвертацией 1 USDT и 1 TON"""
     
     strings = {
-        "name": "DurovParserFixed",
-        "started": "✅ <b>Парсер запущен!</b>\n🤖 Бот: @DurovKursBot\n📢 Канал: @priceDollarTon\n⏱ Интервал: 3 мин\n📊 Формат: Конвертация",
-        "stopped": "⏹️ <b>Парсер остановлен</b>",
-        "already_running": "⚠️ <b>Парсер уже работает</b>",
-        "not_running": "📭 <b>Парсер не запущен</b>",
+        "name": "DurovPriceBot",
+        "started": "✅ <b>Бот запущен!</b>\n🤖 Источник: @DurovKursBot\n📢 Канал: @priceDollarTon\n⏱ Интервал: 3 минуты\n📊 Команды: 1 usd, 1 ton",
+        "stopped": "⏹️ <b>Бот остановлен</b>",
+        "already_running": "⚠️ <b>Бот уже работает</b>",
+        "not_running": "📭 <b>Бот не запущен</b>",
         "test_sent": "📤 <b>Тестовый пост отправлен</b>",
         "status": "🔄 <b>Статус:</b> {}\n⏰ <b>Последнее:</b> {}\n💵 <b>USD:</b> {}₽\n💎 <b>TON:</b> {}₽",
         "error": "❌ <b>Ошибка:</b> {}",
-        "requesting": "📨 Запрашиваю конвертацию...",
-        "parsing": "🔍 Парсинг конвертации...",
+        "sending_commands": "📨 Отправляю команды боту...",
+        "parsing_response": "🔍 Парсинг ответа...",
         "parsed_success": "✅ Данные получены",
         "no_data": "Нет данных",
-        "bot_not_responding": "❌ @DurovKursBot не отвечает"
+        "bot_error": "❌ @DurovKursBot не ответил"
     }
     
     def __init__(self):
         self.task = None
         self.is_running = False
         self.last_update = None
-        self.last_usd_price = None
-        self.last_ton_price = None
+        self.last_usd_price = None  # USD/RUB цена
+        self.last_ton_price = None  # TON/RUB цена
         self.source_bot = "@DurovKursBot"
         self.target_channel = "@priceDollarTon"
         
     async def client_ready(self, client, db):
         self.client = client
         self.db = db
-        logger.info("DurovKursParserFixed загружен")
+        logger.info("DurovPriceBot загружен")
     
     @loader.command(
-        ru_doc="Запустить парсинг конвертации",
-        en_doc="Start parsing conversion"
+        ru_doc="Запустить автоматический парсинг",
+        en_doc="Start automatic parsing"
     )
-    async def startdurovfixed(self, message):
-        """Запустить парсинг"""
+    async def startdurovbot(self, message):
+        """Запустить бота"""
         if self.is_running:
             await utils.answer(message, self.strings("already_running"))
             return
         
         self.is_running = True
-        self.task = asyncio.create_task(self._parsing_loop())
+        self.task = asyncio.create_task(self._main_loop())
         
         await utils.answer(message, self.strings("started"))
-        logger.info("Парсер запущен (исправленный)")
+        logger.info("DurovPriceBot запущен")
     
     @loader.command(
-        ru_doc="Остановить парсинг",
-        en_doc="Stop parsing"
+        ru_doc="Остановить бота",
+        en_doc="Stop bot"
     )
-    async def stopdurovfixed(self, message):
-        """Остановить парсинг"""
+    async def stopdurovbot(self, message):
+        """Остановить бота"""
         if not self.is_running:
             await utils.answer(message, self.strings("not_running"))
             return
@@ -79,20 +79,22 @@ class DurovKursParserFixed(loader.Module):
             self.task = None
         
         await utils.answer(message, self.strings("stopped"))
-        logger.info("Парсер остановлен")
+        logger.info("DurovPriceBot остановлен")
     
     @loader.command(
-        ru_doc="Тестовый запрос конвертации",
-        en_doc="Test conversion request"
+        ru_doc="Полный тест (запрос + парсинг + пост)",
+        en_doc="Full test (request + parsing + post)"
     )
-    async def testdurovfixed(self, message):
-        """Тестовый парсинг"""
-        await utils.answer(message, self.strings("requesting"))
+    async def testdurovfull(self, message):
+        """Тестовый запрос"""
+        await utils.answer(message, self.strings("sending_commands"))
         
         try:
-            usd_price, ton_price = await self._get_prices_from_conversion()
+            # Получаем цены
+            usd_price, ton_price = await self._fetch_prices()
             
             if usd_price and ton_price:
+                # Форматируем пост
                 post = self._format_post(usd_price, ton_price)
                 
                 # Отправляем в канал
@@ -110,16 +112,40 @@ class DurovKursParserFixed(loader.Module):
                 await utils.answer(message, self.strings("test_sent"))
                 await message.respond(post, parse_mode='HTML')
             else:
-                await utils.answer(message, self.strings("bot_not_responding"))
+                await utils.answer(message, self.strings("bot_error"))
                 
         except Exception as e:
             await utils.answer(message, self.strings("error").format(str(e)))
     
     @loader.command(
-        ru_doc="Статус парсера",
-        en_doc="Parser status"
+        ru_doc="Быстрый тест (только парсинг)",
+        en_doc="Quick test (parsing only)"
     )
-    async def durovfixedstatus(self, message):
+    async def testdurovparse(self, message):
+        """Только парсинг"""
+        await utils.answer(message, self.strings("parsing_response"))
+        
+        try:
+            usd_price, ton_price = await self._fetch_prices()
+            
+            if usd_price and ton_price:
+                result = f"✅ Парсинг успешен!\n\n"
+                result += f"💵 USD/RUB: {usd_price:.2f}₽\n"
+                result += f"💎 TON/RUB: {ton_price:.2f}₽\n\n"
+                result += f"Пример поста:\n{self._format_post(usd_price, ton_price)}"
+                
+                await utils.answer(message, result)
+            else:
+                await utils.answer(message, self.strings("bot_error"))
+                
+        except Exception as e:
+            await utils.answer(message, self.strings("error").format(str(e)))
+    
+    @loader.command(
+        ru_doc="Статус бота",
+        en_doc="Bot status"
+    )
+    async def durovbotstatus(self, message):
         """Статус"""
         status = "🟢 Работает" if self.is_running else "🔴 Остановлен"
         
@@ -134,26 +160,27 @@ class DurovKursParserFixed(loader.Module):
         await utils.answer(message, info)
     
     @loader.command(
-        ru_doc="Принудительное обновление",
-        en_doc="Force update"
+        ru_doc="Обновить сейчас и показать",
+        en_doc="Update now and show"
     )
-    async def updatedurovfixed(self, message):
+    async def updatedurovnow(self, message):
         """Обновить сейчас"""
-        await utils.answer(message, self.strings("requesting"))
+        await utils.answer(message, self.strings("sending_commands"))
         
         try:
-            usd_price, ton_price = await self._get_prices_from_conversion()
+            usd_price, ton_price = await self._fetch_prices()
             
             if usd_price and ton_price:
                 post = self._format_post(usd_price, ton_price)
-                await message.respond(post, parse_mode='HTML')
                 
-                # Сохраняем для статуса
+                # Сохраняем данные
                 self.last_usd_price = usd_price
                 self.last_ton_price = ton_price
                 self.last_update = time.time()
+                
+                await message.respond(post, parse_mode='HTML')
             else:
-                await utils.answer(message, self.strings("bot_not_responding"))
+                await utils.answer(message, self.strings("bot_error"))
                 
         except Exception as e:
             await utils.answer(message, self.strings("error").format(str(e)))
@@ -162,43 +189,38 @@ class DurovKursParserFixed(loader.Module):
         ru_doc="Отправить команду боту",
         en_doc="Send command to bot"
     )
-    async def sendconversion(self, message):
-        """Отправить команду конвертации <сумма> <валюта>"""
-        args = utils.get_args(message)
+    async def senddurovcmd(self, message):
+        """Отправить команду <текст>"""
+        args = utils.get_args_raw(message)
         
-        if len(args) < 2:
-            await utils.answer(message, "❌ Формат: .sendconversion <сумма> <валюта>\nПример: .sendconversion 1 USDT")
+        if not args:
+            await utils.answer(message, "❌ Укажите команду\nПример: .senddurovcmd 1 usd")
             return
         
         try:
-            amount = args[0]
-            currency = args[1].upper()
+            await self.client.send_message(self.source_bot, args)
+            await utils.answer(message, f"✅ Отправлено: `{args}`")
             
-            command = f"{amount} {currency}"
-            await self.client.send_message(self.source_bot, command)
-            
-            await utils.answer(message, f"✅ Отправлено боту: `{command}`")
-            
-            # Ждем и показываем ответ
+            # Ждем ответ и показываем
             await asyncio.sleep(2)
             messages = await self.client.get_messages(self.source_bot, limit=3)
             
             for msg in messages:
                 if msg.text and msg.out is False:
-                    await message.respond(f"📨 Ответ бота:\n```\n{msg.text[:500]}\n```")
+                    await message.respond(f"📨 Ответ бота:\n```\n{msg.text[:400]}\n```")
                     break
                     
         except Exception as e:
             await utils.answer(message, f"❌ Ошибка: {str(e)}")
     
-    async def _parsing_loop(self):
-        """Основной цикл парсинга"""
-        logger.info("Цикл парсинга конвертации запущен")
+    async def _main_loop(self):
+        """Основной цикл работы"""
+        logger.info("Основной цикл запущен")
         
         while self.is_running:
             try:
-                # Получаем цены через конвертацию
-                usd_price, ton_price = await self._get_prices_from_conversion()
+                # Получаем цены
+                usd_price, ton_price = await self._fetch_prices()
                 
                 if usd_price and ton_price:
                     # Сохраняем данные
@@ -218,7 +240,7 @@ class DurovKursParserFixed(loader.Module):
                     
                     logger.info(f"Пост отправлен | USD: {usd_price:.2f}₽, TON: {ton_price:.2f}₽")
                 
-                # Ждем 3 минуты до следующего обновления
+                # Ждем 3 минуты до следующего цикла
                 wait_time = 180  # 3 минуты
                 for i in range(wait_time):
                     if not self.is_running:
@@ -226,181 +248,98 @@ class DurovKursParserFixed(loader.Module):
                     await asyncio.sleep(1)
                     
             except Exception as e:
-                logger.error(f"Ошибка в цикле парсинга: {e}")
-                await asyncio.sleep(30)
+                logger.error(f"Ошибка в основном цикле: {e}")
+                await asyncio.sleep(30)  # Ждем перед повторной попыткой
     
-    async def _get_prices_from_conversion(self):
-        """Получение цен через конвертацию (новый метод)"""
+    async def _fetch_prices(self):
+        """Получение цен от бота"""
         try:
-            # Шаг 1: Отправляем "1 USDT" для конвертации в RUB
-            await self.client.send_message(self.source_bot, "1 USDT")
+            # Шаг 1: Очищаем историю сообщений (отправляем /start)
+            await self.client.send_message(self.source_bot, "/start")
+            await asyncio.sleep(1)
+            
+            # Шаг 2: Отправляем "1 usd" для получения курса USD
+            await self.client.send_message(self.source_bot, "1 usd")
             await asyncio.sleep(2)
             
-            # Шаг 2: Отправляем "1 TON" для конвертации в RUB
-            await self.client.send_message(self.source_bot, "1 TON")
+            # Шаг 3: Отправляем "1 ton" для получения курса TON
+            await self.client.send_message(self.source_bot, "1 ton")
             await asyncio.sleep(2)
             
-            # Шаг 3: Получаем последние сообщения
-            messages = await self.client.get_messages(self.source_bot, limit=15)
+            # Шаг 4: Получаем последние сообщения
+            messages = await self.client.get_messages(self.source_bot, limit=10)
             
             usd_price = None
             ton_price = None
             
-            # Ищем ответы в формате "Конвертация"
-            for msg in reversed(messages):
-                if msg.text and msg.out is False:
+            # Ищем ответы в правильном формате
+            for msg in messages:
+                if msg.text and msg.out is False:  # Только входящие сообщения
                     text = msg.text
                     
-                    # Парсим конвертацию USDT → RUB
-                    if not usd_price and "Конвертация 1.0 USDT" in text:
-                        usd_price = self._parse_conversion_usd(text)
+                    # Ищем конвертацию USDT (USD)
+                    if "Конвертация 1.0 USDT" in text and not usd_price:
+                        usd_price = self._extract_price_from_conversion(text, "USDT")
                     
-                    # Парсим конвертацию TON → RUB
-                    if not ton_price and "Конвертация 1.0 TON" in text:
-                        ton_price = self._parse_conversion_ton(text)
+                    # Ищем конвертацию TON
+                    if "Конвертация 1.0 TON" in text and not ton_price:
+                        ton_price = self._extract_price_from_conversion(text, "TON")
                     
                     # Если нашли обе цены, выходим
                     if usd_price and ton_price:
                         break
             
-            # Если не нашли, пробуем альтернативные команды
+            # Если не нашли, пробуем альтернативные варианты
             if not usd_price or not ton_price:
-                await self.client.send_message(self.source_bot, "1 usd")
+                # Пробуем другие команды
+                await self.client.send_message(self.source_bot, "1 USDT")
                 await asyncio.sleep(2)
                 
-                await self.client.send_message(self.source_bot, "1 ton")
+                await self.client.send_message(self.source_bot, "1 TON")
                 await asyncio.sleep(2)
                 
                 messages = await self.client.get_messages(self.source_bot, limit=10)
                 
-                for msg in reversed(messages):
+                for msg in messages:
                     if msg.text and msg.out is False:
                         text = msg.text
                         
                         if not usd_price:
-                            usd_price = self._parse_conversion_usd(text)
-                            if not usd_price:
-                                usd_price = self._parse_generic_usd(text)
+                            usd_price = self._extract_price_from_conversion(text, "USDT")
                         
                         if not ton_price:
-                            ton_price = self._parse_conversion_ton(text)
-                            if not ton_price:
-                                ton_price = self._parse_generic_ton(text)
+                            ton_price = self._extract_price_from_conversion(text, "TON")
             
             return usd_price, ton_price
             
         except Exception as e:
-            logger.error(f"Ошибка получения конвертации: {e}")
+            logger.error(f"Ошибка получения цен: {e}")
             return None, None
     
-    def _parse_conversion_usd(self, text):
-        """Парсинг цены USD из формата конвертации"""
+    def _extract_price_from_conversion(self, text, currency_type):
+        """Извлечение цены из формата конвертации"""
         try:
-            # Формат: "Конвертация 1.0 USDT: ... RUB : 76.09"
+            # Ищем строку с RUB в формате:
+            # "RUB : 76.09" или "RUB: 119.39"
             pattern = r'RUB\s*:\s*([\d]+[.,]\d+)'
-            match = re.search(pattern, text, re.IGNORECASE)
+            match = re.search(pattern, text)
             
             if match:
                 price_str = match.group(1).replace(',', '.')
                 price = float(price_str)
                 
-                # Проверяем диапазон
-                if 30 <= price <= 150:
-                    return round(price, 2)
-            
-            # Альтернативный паттерн
-            pattern2 = r'(\d+[.,]\d+)\s*₽.*USDT'
-            match = re.search(pattern2, text, re.IGNORECASE)
-            
-            if match:
-                price_str = match.group(1).replace(',', '.')
-                price = float(price_str)
-                
-                if 30 <= price <= 150:
-                    return round(price, 2)
+                # Проверяем разумный диапазон
+                if currency_type == "USDT":
+                    if 30 <= price <= 150:  # USD должен быть в диапазоне 30-150 руб
+                        return round(price, 2)
+                elif currency_type == "TON":
+                    if 10 <= price <= 1000:  # TON должен быть в диапазоне 10-1000 руб
+                        return round(price, 2)
             
             return None
             
         except Exception as e:
-            logger.error(f"Ошибка парсинга конвертации USD: {e}")
-            return None
-    
-    def _parse_conversion_ton(self, text):
-        """Парсинг цены TON из формата конвертации"""
-        try:
-            # Формат: "Конвертация 1.0 TON: ... RUB : 119.62"
-            pattern = r'RUB\s*:\s*([\d]+[.,]\d+)'
-            match = re.search(pattern, text, re.IGNORECASE)
-            
-            if match:
-                price_str = match.group(1).replace(',', '.')
-                price = float(price_str)
-                
-                # Проверяем диапазон
-                if 10 <= price <= 1000:
-                    return round(price, 2)
-            
-            # Альтернативный паттерн
-            pattern2 = r'(\d+[.,]\d+)\s*₽.*TON'
-            match = re.search(pattern2, text, re.IGNORECASE)
-            
-            if match:
-                price_str = match.group(1).replace(',', '.')
-                price = float(price_str)
-                
-                if 10 <= price <= 1000:
-                    return round(price, 2)
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"Ошибка парсинга конвертации TON: {e}")
-            return None
-    
-    def _parse_generic_usd(self, text):
-        """Общий парсинг USD"""
-        try:
-            patterns = [
-                r'1\s*[Uu][Ss][Dd].*?(\d+[.,]\d+)\s*[₽руб]',
-                r'(\d+[.,]\d+)\s*[₽руб].*1\s*[Uu][Ss][Dd]',
-                r'[Дд]оллар.*?(\d+[.,]\d+)\s*[₽руб]',
-                r'(\d+[.,]\d+)\s*[₽руб].*[Дд]оллар'
-            ]
-            
-            for pattern in patterns:
-                match = re.search(pattern, text, re.IGNORECASE)
-                if match:
-                    price_str = match.group(1).replace(',', '.')
-                    price = float(price_str)
-                    
-                    if 30 <= price <= 150:
-                        return round(price, 2)
-            
-            return None
-        except:
-            return None
-    
-    def _parse_generic_ton(self, text):
-        """Общий парсинг TON"""
-        try:
-            patterns = [
-                r'1\s*[TТ][OО0][NН].*?(\d+[.,]\d+)\s*[₽руб]',
-                r'(\d+[.,]\d+)\s*[₽руб].*1\s*[TТ][OО0][NН]',
-                r'[TТ][OО0][NН].*?(\d+[.,]\d+)\s*[₽руб]',
-                r'(\d+[.,]\d+)\s*[₽руб].*[TТ][OО0][NН]'
-            ]
-            
-            for pattern in patterns:
-                match = re.search(pattern, text, re.IGNORECASE)
-                if match:
-                    price_str = match.group(1).replace(',', '.')
-                    price = float(price_str)
-                    
-                    if 10 <= price <= 1000:
-                        return round(price, 2)
-            
-            return None
-        except:
+            logger.error(f"Ошибка извлечения цены {currency_type}: {e}")
             return None
     
     def _get_msk_time(self):
@@ -420,20 +359,26 @@ class DurovKursParserFixed(loader.Module):
         return msk_time.strftime("%H:%M МСК")
     
     def _format_number(self, number):
-        """Форматирование числа"""
+        """Форматирование числа с русским разделителем"""
         if isinstance(number, (int, float)):
-            if number.is_integer():
-                return f"{int(number):,}".replace(",", " ")
-            else:
-                formatted = f"{number:,.2f}".replace(",", " ").replace(".", ",")
-                # Убираем лишние нули если они есть
-                if formatted.endswith(",00"):
-                    formatted = formatted[:-3]
-                return formatted
+            # Форматируем с 2 знаками после запятой
+            formatted = f"{number:,.2f}"
+            
+            # Заменяем точку на запятую для десятичных
+            formatted = formatted.replace(".", ",")
+            
+            # Заменяем запятые на пробелы для разделителей тысяч
+            formatted = formatted.replace(",", " ", 1) if "," in formatted else formatted
+            
+            # Убираем .00 если целое число
+            if formatted.endswith(",00"):
+                formatted = formatted[:-3]
+            
+            return formatted
         return str(number)
     
     def _format_post(self, usd_price, ton_price):
-        """Форматирование поста в точном формате"""
+        """Форматирование поста в точном требуемом формате"""
         # Форматируем числа
         usd_formatted = self._format_number(usd_price)
         ton_formatted = self._format_number(ton_price)
@@ -441,7 +386,7 @@ class DurovKursParserFixed(loader.Module):
         # Получаем время МСК
         msk_time = self._get_msk_time_str()
         
-        # Формируем пост ТОЧНО в указанном формате
+        # Формируем пост ТОЧНО в нужном формате
         post = f"💵 USD: <b>{usd_formatted}₽</b>\n"
         post += f"💎 TON: <b>{ton_formatted}₽</b>\n\n"
         post += f"<i>🕐 {msk_time} | @priceDollarTon</i>"
