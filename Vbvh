@@ -1,12 +1,12 @@
 # meta developer: @kiminaiq
-# meta pic: https://img.icons8.com/color/48/000000/money-bag.png
-# meta description: Публикация курсов USD и TON в ₽ в канал @priceDollarTon (время МСК)
+# meta pic: https://img.icons8.com/color/48/000000/wallet--v1.png
+# meta description: Получение цен из @wallet и публикация в канал
 # scope: hikka_only
 # scope: hikka_min 1.6.0
 
-import aiohttp
 import asyncio
 import time
+import re
 from datetime import datetime, timedelta
 from .. import loader, utils
 import logging
@@ -14,58 +14,59 @@ import logging
 logger = logging.getLogger(__name__)
 
 @loader.tds
-class PricePosterMSK(loader.Module):
-    """Публикация курсов USD и TON в ₽ в @priceDollarTon (время МСК)"""
+class WalletPriceParser(loader.Module):
+    """Парсинг цен из @wallet и публикация в канал"""
     
     strings = {
-        "name": "PricePosterMSK",
-        "started": "✅ <b>Бот запущен!</b>\n📢 Канал: @priceDollarTon\n⏱ Каждые 3 минуты\n💵 USD → RUB\n💎 TON → RUB",
+        "name": "WalletPriceParser",
+        "started": "✅ <b>Бот запущен!</b>\n📥 Источник: @wallet\n📢 Канал: @priceDollarTon\n⏱ Каждые 3 минуты",
         "stopped": "⏹️ <b>Бот остановлен</b>",
         "already_running": "⚠️ <b>Бот уже работает</b>",
         "not_running": "📭 <b>Бот не запущен</b>",
         "test_sent": "📤 <b>Тестовый пост отправлен</b>",
         "status": "🔄 <b>Статус:</b> {}\n⏰ <b>Последнее:</b> {}\n💵 <b>USD:</b> {}₽\n💎 <b>TON:</b> {}₽",
         "error": "❌ <b>Ошибка:</b> {}",
-        "updating": "🔄 Получаю курсы...",
-        "no_price": "Нет данных"
+        "updating": "🔄 Получаю цены из @wallet...",
+        "no_price": "Нет данных",
+        "wallet_not_found": "❌ Не удалось получить данные от @wallet",
+        "parsing_error": "⚠️ Ошибка парсинга данных"
     }
     
     def __init__(self):
         self.task = None
         self.is_running = False
         self.last_update = None
-        self.session = None
         self.last_usd_price = None
-        self.last_ton_usd_price = None  # Добавили сохранение цены TON в USD
-        self.last_ton_rub_price = None
+        self.last_ton_price = None
+        self.wallet_bot_id = "@wallet"
+        self.target_channel = "@priceDollarTon"
     
     async def client_ready(self, client, db):
         self.client = client
         self.db = db
-        self.session = aiohttp.ClientSession()
-        logger.info("PricePosterMSK загружен")
+        logger.info("WalletPriceParser загружен")
     
     @loader.command(
-        ru_doc="Запустить публикацию цен в @priceDollarTon",
-        en_doc="Start posting prices to @priceDollarTon"
+        ru_doc="Запустить парсинг из @wallet",
+        en_doc="Start parsing from @wallet"
     )
-    async def startpricepostcmd(self, message):
+    async def startwalletparse(self, message):
         """Запустить бота"""
         if self.is_running:
             await utils.answer(message, self.strings("already_running"))
             return
         
         self.is_running = True
-        self.task = asyncio.create_task(self._posting_loop())
+        self.task = asyncio.create_task(self._parsing_loop())
         
         await utils.answer(message, self.strings("started"))
-        logger.info("Бот запущен")
+        logger.info("Парсер запущен")
     
     @loader.command(
-        ru_doc="Остановить бота",
-        en_doc="Stop bot"
+        ru_doc="Остановить парсинг",
+        en_doc="Stop parsing"
     )
-    async def stoppricepostcmd(self, message):
+    async def stopwalletparse(self, message):
         """Остановить бота"""
         if not self.is_running:
             await utils.answer(message, self.strings("not_running"))
@@ -77,24 +78,24 @@ class PricePosterMSK(loader.Module):
             self.task = None
         
         await utils.answer(message, self.strings("stopped"))
-        logger.info("Бот остановлен")
+        logger.info("Парсер остановлен")
     
     @loader.command(
-        ru_doc="Тестовый пост",
-        en_doc="Test post"
+        ru_doc="Тестовый парсинг и пост",
+        en_doc="Test parsing and post"
     )
-    async def testpostcmd(self, message):
-        """Тестовый пост"""
+    async def testwalletparse(self, message):
+        """Тестовый парсинг"""
         await utils.answer(message, self.strings("updating"))
         try:
-            usd_rub, ton_usd, ton_rub = await self._get_all_prices()
+            usd_price, ton_price = await self._get_prices_from_wallet()
             
-            if usd_rub and ton_usd and ton_rub:
-                post = self._format_post(usd_rub, ton_usd, ton_rub)
+            if usd_price and ton_price:
+                post = self._format_post(usd_price, ton_price)
                 
                 # Отправляем в канал
                 await self.client.send_message(
-                    "@priceDollarTon",
+                    self.target_channel,
                     post,
                     parse_mode='HTML'
                 )
@@ -103,16 +104,16 @@ class PricePosterMSK(loader.Module):
                 await utils.answer(message, self.strings("test_sent"))
                 await message.respond(post, parse_mode='HTML')
             else:
-                await utils.answer(message, "❌ Не удалось получить курсы")
+                await utils.answer(message, self.strings("wallet_not_found"))
                 
         except Exception as e:
             await utils.answer(message, self.strings("error").format(str(e)))
     
     @loader.command(
-        ru_doc="Статус бота",
-        en_doc="Bot status"
+        ru_doc="Статус парсера",
+        en_doc="Parser status"
     )
-    async def pricestatuscmd(self, message):
+    async def walletstatus(self, message):
         """Статус"""
         status = "🟢 Работает" if self.is_running else "🔴 Остановлен"
         
@@ -121,52 +122,77 @@ class PricePosterMSK(loader.Module):
             last_time = self._get_msk_time_str(self.last_update)
         
         usd_info = f"{self.last_usd_price:.2f}₽" if self.last_usd_price else self.strings("no_price")
-        ton_info = f"{self.last_ton_rub_price:.2f}₽" if self.last_ton_rub_price else self.strings("no_price")
-        
-        if self.last_ton_usd_price:
-            ton_info += f" (${self.last_ton_usd_price:.4f})"
+        ton_info = f"{self.last_ton_price:.2f}₽" if self.last_ton_price else self.strings("no_price")
         
         info = self.strings("status").format(status, last_time, usd_info, ton_info)
         await utils.answer(message, info)
     
     @loader.command(
-        ru_doc="Обновить сейчас",
-        en_doc="Update now"
+        ru_doc="Принудительное обновление",
+        en_doc="Force update"
     )
-    async def updatepricescmd(self, message):
-        """Обновить"""
+    async def updatewallet(self, message):
+        """Обновить сейчас"""
         await utils.answer(message, self.strings("updating"))
         try:
-            usd_rub, ton_usd, ton_rub = await self._get_all_prices()
+            usd_price, ton_price = await self._get_prices_from_wallet()
             
-            if usd_rub and ton_usd and ton_rub:
-                post = self._format_post(usd_rub, ton_usd, ton_rub)
+            if usd_price and ton_price:
+                post = self._format_post(usd_price, ton_price)
                 await message.respond(post, parse_mode='HTML')
             else:
-                await utils.answer(message, "❌ Ошибка получения данных")
+                await utils.answer(message, self.strings("wallet_not_found"))
                 
         except Exception as e:
             await utils.answer(message, self.strings("error").format(str(e)))
     
-    async def _posting_loop(self):
-        """Основной цикл публикации"""
+    @loader.command(
+        ru_doc="Ручной пост с ценами",
+        en_doc="Manual post with prices"
+    )
+    async def postmanual(self, message):
+        """Ручной пост <usd> <ton>"""
+        args = utils.get_args(message)
+        
+        if len(args) < 2:
+            await utils.answer(message, "❌ Формат: .postmanual <usd_price> <ton_price>")
+            return
+        
+        try:
+            usd_price = float(args[0].replace(",", "."))
+            ton_price = float(args[1].replace(",", "."))
+            
+            post = self._format_post(usd_price, ton_price)
+            
+            await self.client.send_message(
+                self.target_channel,
+                post,
+                parse_mode='HTML'
+            )
+            
+            await utils.answer(message, "✅ Пост отправлен")
+            
+        except ValueError:
+            await utils.answer(message, "❌ Неверный формат цен")
+    
+    async def _parsing_loop(self):
+        """Основной цикл парсинга"""
         while self.is_running:
             try:
-                # Получаем все цены
-                usd_rub, ton_usd, ton_rub = await self._get_all_prices()
+                # Получаем цены из @wallet
+                usd_price, ton_price = await self._get_prices_from_wallet()
                 
-                if usd_rub and ton_usd and ton_rub:
-                    # Сохраняем для статуса
-                    self.last_usd_price = usd_rub
-                    self.last_ton_usd_price = ton_usd
-                    self.last_ton_rub_price = ton_rub
+                if usd_price and ton_price:
+                    # Сохраняем цены
+                    self.last_usd_price = usd_price
+                    self.last_ton_price = ton_price
                     
                     # Форматируем пост
-                    post = self._format_post(usd_rub, ton_usd, ton_rub)
+                    post = self._format_post(usd_price, ton_price)
                     
                     # Отправляем в канал
                     await self.client.send_message(
-                        "@priceDollarTon",
+                        self.target_channel,
                         post,
                         parse_mode='HTML'
                     )
@@ -174,7 +200,7 @@ class PricePosterMSK(loader.Module):
                     # Обновляем время
                     self.last_update = time.time()
                     
-                    logger.info(f"Пост отправлен | USD: {usd_rub:.2f}₽, TON: {ton_rub:.2f}₽ (${ton_usd:.4f})")
+                    logger.info(f"Пост отправлен | USD: {usd_price:.2f}₽, TON: {ton_price:.2f}₽")
                 
                 # Ждем 3 минуты (180 секунд)
                 for i in range(180):
@@ -183,83 +209,101 @@ class PricePosterMSK(loader.Module):
                     await asyncio.sleep(1)
                     
             except Exception as e:
-                logger.error(f"Ошибка в цикле: {e}")
+                logger.error(f"Ошибка в цикле парсинга: {e}")
                 await asyncio.sleep(30)
     
-    async def _get_all_prices(self):
-        """Получение всех курсов"""
+    async def _get_prices_from_wallet(self):
+        """Получение цен из бота @wallet"""
         try:
-            # Получаем USD/RUB
-            usd_rub = await self._get_usd_rub()
+            # Отправляем команду /start или пустое сообщение боту @wallet
+            await self.client.send_message(self.wallet_bot_id, "/start")
             
-            # Получаем TON/USD
-            ton_usd = await self._get_ton_usd()
+            # Ждем ответа
+            await asyncio.sleep(2)
             
-            if usd_rub and ton_usd:
-                # Конвертируем TON в RUB
-                ton_rub = ton_usd * usd_rub
-                return usd_rub, ton_usd, ton_rub
+            # Получаем последние сообщения от бота
+            messages = await self.client.get_messages(self.wallet_bot_id, limit=5)
             
-            return None, None, None
+            for msg in messages:
+                if msg.text:
+                    usd_price = self._extract_usd_price(msg.text)
+                    ton_price = self._extract_ton_price(msg.text)
+                    
+                    if usd_price and ton_price:
+                        return usd_price, ton_price
+            
+            # Если не нашли в последних сообщениях, пытаемся получить свежее
+            await self.client.send_message(self.wallet_bot_id, "курс")
+            await asyncio.sleep(2)
+            
+            messages = await self.client.get_messages(self.wallet_bot_id, limit=3)
+            
+            for msg in messages:
+                if msg.text:
+                    usd_price = self._extract_usd_price(msg.text)
+                    ton_price = self._extract_ton_price(msg.text)
+                    
+                    if usd_price and ton_price:
+                        return usd_price, ton_price
+            
+            return None, None
             
         except Exception as e:
-            logger.error(f"Ошибка получения цен: {e}")
-            return None, None, None
+            logger.error(f"Ошибка получения данных из @wallet: {e}")
+            return None, None
     
-    async def _get_usd_rub(self):
-        """Получение курса USD/RUB"""
-        sources = [
-            "https://api.frankfurter.app/latest?from=USD&to=RUB",
-            "https://api.exchangerate-api.com/v4/latest/USD",
-            "https://api.currencyapi.com/v3/latest?apikey=cur_live_123&currencies=RUB&base_currency=USD"
-        ]
-        
-        for url in sources:
-            try:
-                async with self.session.get(url, timeout=5) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        
-                        # Извлекаем курс в зависимости от API
-                        if "frankfurter" in url:
-                            return data['rates']['RUB']
-                        elif "exchangerate-api" in url:
-                            return data['rates']['RUB']
-                        elif "currencyapi" in url:
-                            return data['data']['RUB']['value']
-            except:
-                continue
-        
-        return None
+    def _extract_usd_price(self, text):
+        """Извлечение цены USD из текста"""
+        try:
+            # Паттерны для поиска USD цены
+            patterns = [
+                r'USD[:\s]*([\d,]+\.?\d*)\s*₽',
+                r'USD[:\s]*([\d,]+\.?\d*)\s*руб',
+                r'доллар[:\s]*([\d,]+\.?\d*)\s*₽',
+                r'\$[:\s]*([\d,]+\.?\d*)\s*₽',
+                r'([\d,]+\.?\d*)\s*₽.*USD',
+                r'([\d,]+\.?\d*)\s*руб.*USD'
+            ]
+            
+            for pattern in patterns:
+                match = re.search(pattern, text, re.IGNORECASE)
+                if match:
+                    price_str = match.group(1).replace(",", ".")
+                    return float(price_str)
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Ошибка парсинга USD: {e}")
+            return None
     
-    async def _get_ton_usd(self):
-        """Получение курса TON/USD"""
-        sources = [
-            ("https://api.binance.com/api/v3/ticker/price?symbol=TONUSDT", "binance"),
-            ("https://api.coingecko.com/api/v3/simple/price?ids=the-open-network&vs_currencies=usd", "coingecko"),
-            ("https://api.bybit.com/v5/market/tickers?category=spot&symbol=TONUSDT", "bybit")
-        ]
-        
-        for url, source in sources:
-            try:
-                async with self.session.get(url, timeout=5) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        
-                        if source == "binance":
-                            return float(data['price'])
-                        elif source == "coingecko":
-                            return data['the-open-network']['usd']
-                        elif source == "bybit":
-                            return float(data['result']['list'][0]['lastPrice'])
-            except:
-                continue
-        
-        return None
+    def _extract_ton_price(self, text):
+        """Извлечение цены TON из текста"""
+        try:
+            # Паттерны для поиска TON цены
+            patterns = [
+                r'Ton[:\s]*([\d,]+\.?\d*)\s*₽',
+                r'Ton[:\s]*([\d,]+\.?\d*)\s*руб',
+                r'Toncoin[:\s]*([\d,]+\.?\d*)\s*₽',
+                r'TON[:\s]*([\d,]+\.?\d*)\s*₽',
+                r'([\d,]+\.?\d*)\s*₽.*Ton',
+                r'([\d,]+\.?\d*)\s*руб.*Ton'
+            ]
+            
+            for pattern in patterns:
+                match = re.search(pattern, text, re.IGNORECASE)
+                if match:
+                    price_str = match.group(1).replace(",", ".")
+                    return float(price_str)
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Ошибка парсинга TON: {e}")
+            return None
     
     def _get_msk_time(self):
         """Получение текущего времени по МСК"""
-        # МСК = UTC+3
         utc_now = datetime.utcnow()
         msk_time = utc_now + timedelta(hours=3)
         return msk_time
@@ -281,11 +325,11 @@ class PricePosterMSK(loader.Module):
         else:
             return f"{number:,.2f}".replace(",", " ").replace(".", ",")
     
-    def _format_post(self, usd_rub, ton_usd, ton_rub):
-        """Форматирование поста в нужном формате"""
+    def _format_post(self, usd_price, ton_price):
+        """Форматирование поста"""
         # Форматируем числа
-        usd_formatted = self._format_number(usd_rub)
-        ton_formatted = self._format_number(ton_rub)
+        usd_formatted = self._format_number(usd_price)
+        ton_formatted = self._format_number(ton_price)
         
         # Получаем время МСК
         msk_time = self._get_msk_time_str()
@@ -293,10 +337,8 @@ class PricePosterMSK(loader.Module):
         # Формируем пост
         post = f"💵 USD: <b>{usd_formatted}₽</b>\n"
         post += f"💎 TON: <b>{ton_formatted}₽</b>\n\n"
-        post += f"<i>🕐 {msk_time} | @priceDollarTon</i>"
-        
-        # Для отладки можно добавить цену TON в USD в комментарий
-        # post += f"\n<code>TON/USD: ${ton_usd:.4f}</code>"
+        post += f"<i>🕐 {msk_time} | @priceDollarTon</i>\n"
+        post += f"<i>📊 Источник: @wallet</i>"
         
         return post
     
@@ -306,6 +348,3 @@ class PricePosterMSK(loader.Module):
         
         if self.task:
             self.task.cancel()
-        
-        if self.session:
-            await self.session.close()
