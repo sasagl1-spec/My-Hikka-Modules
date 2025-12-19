@@ -1,42 +1,29 @@
 # -*- coding: utf-8 -*-
-# Модуль для тестирования с оптимизированными параметрами
-# ОБРАЗОВАТЕЛЬНЫЙ ПРИМЕР - только для исследовательских целей
+# Простой модуль для тестирования
+# Упрощенная версия для избежания ошибок загрузки
 
 from .. import loader, utils
 import asyncio
 import random
 import logging
-from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
 @loader.tds
-class OptimizedTesterModule(loader.Module):
-    """Модуль для тестирования с оптимизированными параметрами"""
+class SimpleAutoPoster(loader.Module):
+    """Простой модуль авто-постинга"""
     
-    strings = {
-        "name": "OptimizedTester",
-        "active": "⚡ ОПТИМИЗИРОВАННЫЙ РЕЖИМ АКТИВЕН",
-        "inactive": "⏹️ Режим остановлен",
-        "starting": "🚀 Запуск оптимизированного режима...",
-        "warning": "⚠️ РЕЖИМ С УМЕНЬШЕННЫМ РИСКОМ"
-    }
+    strings = {"name": "SimplePoster"}
 
     def __init__(self):
-        self.is_running = False
+        self.running = False
         self.task = None
-        self.cycle_count = 0
-        self.success_count = 0
-        self.fail_count = 0
-        self.start_time = None
-        self.last_send_time = None
         
-        # Объединенный список всех чатов для тестирования
-        self.all_target_chats = [
-            # Существующие чаты
+        # Список чатов (упрощенный)
+        self.chats = [
             "https://t.me/piteraq",
             "https://t.me/vpiskavipspb",
-            "https://t.me/VpISkA991", 
+            "https://t.me/VpISkA991",
             "https://t.me/sextimeeeeeee",
             "https://t.me/vpiski_ekat",
             "https://t.me/tusovkimscspb",
@@ -50,458 +37,131 @@ class OptimizedTesterModule(loader.Module):
             "https://t.me/vpiska_chelyaba001",
             "https://t.me/vpiskaa_spb",
             "https://t.me/vpiska_beseda",
-            
-            # Новые чаты
             "https://t.me/MOSCOW_VPISKI_TOP",
             "https://t.me/wpiska_moscow",
             "https://t.me/vpiski_msk99",
             "https://t.me/msvpis",
-            "https://t.me/vpiski_Moskow1", 
+            "https://t.me/vpiski_Moskow1",
             "https://t.me/VAO_v_piska",
             "https://t.me/vpiskimsk77"
         ]
         
-        # Удаляем дубликаты если есть
-        self.target_chats = list(dict.fromkeys(self.all_target_chats))
-        
-        # Текст для тестирования
-        self.test_message = "Эскорт услуги у меня в профиле🤤 \nДевушки на любой вкус💌"
-        
-        # Статистика по чатам
-        self.chat_stats = {}
+        self.message = "Эскорт услуги у меня в профиле🤤 \nДевушки на любой вкус💌"
 
     async def client_ready(self, client, db):
         self.client = client
         self.db = db
-        logger.info(f"Модуль OptimizedTester инициализирован. Чатов: {len(self.target_chats)}")
-        
-        # Инициализация статистики по чатам
-        for chat in self.target_chats:
-            self.chat_stats[chat] = {"success": 0, "fails": 0, "last_send": None}
+        logger.info("SimplePoster загружен")
 
-    async def ot_startcmd(self, message):
-        """Запустить оптимизированное тестирование: .ot_start"""
-        if self.is_running:
-            await utils.answer(message, "🔁 Тестирование уже активно")
+    async def startcmd(self, message):
+        """Запустить: .start"""
+        if self.running:
+            await utils.answer(message, "Уже запущено")
             return
-            
-        self.is_running = True
-        self.start_time = datetime.now()
-        self.cycle_count = 0
         
-        info_msg = (
-            f"{self.strings['starting']}\n\n"
-            f"📊 НАСТРОЙКИ РЕЖИМА:\n"
-            f"• Интервал циклов: 70 секунд\n"
-            f"• Чатов за цикл: 3\n" 
-            f"• Пауза между чатами: 5 секунд\n"
-            f"• Всего доступных чатов: {len(self.target_chats)}\n"
-            f"• Ориентировочный цикл: ~80 секунд\n\n"
-            f"ℹ️ Это более безопасный режим с пониженной частотой"
-        )
+        self.running = True
+        await utils.answer(message, "Запускаю...")
         
-        await utils.answer(message, info_msg)
-        
-        # Запуск оптимизированного цикла
-        self.task = asyncio.create_task(self.optimized_testing_loop())
-        
-        await utils.answer(message, self.strings["active"])
-        logger.info(f"Запущен оптимизированный режим в {self.start_time}")
+        self.task = asyncio.create_task(self.main_loop())
+        await utils.answer(message, "✅ Автопостинг запущен")
 
-    async def ot_stopcmd(self, message):
-        """Остановка тестирования: .ot_stop"""
-        if not self.is_running:
-            await utils.answer(message, "ℹ️ Режим не активен")
+    async def stopcmd(self, message):
+        """Остановить: .stop"""
+        if not self.running:
+            await utils.answer(message, "Не запущено")
             return
-            
-        self.is_running = False
+        
+        self.running = False
         if self.task:
             self.task.cancel()
-            try:
-                await self.task
-            except asyncio.CancelledError:
-                pass
         
-        if self.start_time:
-            duration = datetime.now() - self.start_time
-            efficiency = self._calculate_efficiency()
-            
-            # Статистика по топ-чатам
-            top_chats = self._get_top_chats(5)
-            
-            stop_msg = (
-                f"{self.strings['inactive']}\n\n"
-                f"📈 ИТОГОВАЯ СТАТИСТИКА:\n"
-                f"• Выполнено циклов: {self.cycle_count}\n"
-                f"• Успешных отправок: {self.success_count}\n"
-                f"• Неудачных попыток: {self.fail_count}\n"
-                f"• Общая эффективность: {efficiency}%\n"
-                f"• Общее время: {self._format_duration(duration)}\n"
-                f"• Среднее время цикла: {self._calculate_avg_cycle_time()} сек\n\n"
-                f"🏆 ТОП-5 ЧАТОВ ПО УСПЕШНОСТИ:\n{top_chats}"
-            )
-        else:
-            stop_msg = self.strings['inactive']
-            
-        await utils.answer(message, stop_msg)
-        logger.info(f"Оптимизированный режим остановлен. Циклов: {self.cycle_count}")
+        await utils.answer(message, "⏹️ Остановлено")
 
-    async def optimized_testing_loop(self):
-        """ОПТИМИЗИРОВАННЫЙ ЦИКЛ: отправка каждые 70 секунд в 3 чата с паузой 5 секунд"""
-        logger.info("=== ЗАПУЩЕН ОПТИМИЗИРОВАННЫЙ ТЕСТИРОВАВЩИЙ ЦИКЛ ===")
-        
-        while self.is_running:
-            self.cycle_count += 1
-            cycle_start_time = datetime.now()
-            
-            try:
-                # ОСНОВНАЯ ЗАДЕРЖКА МЕЖДУ ЦИКЛАМИ - 70 СЕКУНД
-                logger.info(f"Цикл #{self.cycle_count} - Ожидание 70 секунд")
-                await asyncio.sleep(70)
-                
-                if not self.is_running:
-                    break
-                
-                # ВЫБИРАЕМ 3 СЛУЧАЙНЫХ ЧАТА С УЧЕТОМ ИСТОРИИ
-                selected_chats = self._select_chats_for_cycle(3)
-                
-                # ЛОГИРОВАНИЕ НАЧАЛА ЦИКЛА
-                current_time = datetime.now().strftime('%H:%M:%S')
-                logger.info(
-                    f"Цикл #{self.cycle_count} начат в {current_time}\n"
-                    f"Выбранные чаты: {', '.join([c.split('/')[-1] for c in selected_chats])}"
-                )
-                
-                # ОТПРАВКА В 3 ЧАТА С ПАУЗОЙ 5 СЕКУНД
-                for i, chat in enumerate(selected_chats):
-                    chat_name = chat.split('/')[-1]
-                    
-                    try:
-                        # Отправка сообщения
-                        await self.client.send_message(chat, self.test_message)
-                        
-                        # Обновление статистики
-                        self.success_count += 1
-                        self.chat_stats[chat]["success"] += 1
-                        self.chat_stats[chat]["last_send"] = datetime.now()
-                        self.last_send_time = datetime.now()
-                        
-                        logger.info(f"Цикл #{self.cycle_count}: Успешно в {chat_name}")
-                        
-                    except Exception as e:
-                        # Обработка ошибок
-                        self.fail_count += 1
-                        self.chat_stats[chat]["fails"] += 1
-                        error_type = str(e)[:100]
-                        logger.error(f"Цикл #{self.cycle_count}: Ошибка в {chat_name}: {error_type}")
-                    
-                    # ПАУЗА 5 СЕКУНД МЕЖДУ ОТПРАВКАМИ (кроме последней)
-                    if i < len(selected_chats) - 1:
-                        await asyncio.sleep(5)
-                
-                # РАСЧЕТ ВРЕМЕНИ ВЫПОЛНЕНИЯ ЦИКЛА
-                cycle_duration = (datetime.now() - cycle_start_time).total_seconds()
-                logger.info(
-                    f"Цикл #{self.cycle_count} завершен за {cycle_duration:.1f} секунд\n"
-                    f"Общая статистика: ✓{self.success_count} ✗{self.fail_count}"
-                )
-                
-                # ПЕРИОДИЧЕСКАЯ ОПТИМИЗАЦИЯ (каждые 10 циклов)
-                if self.cycle_count % 10 == 0:
-                    self._perform_maintenance_check()
-                
-                # АВТОМАТИЧЕСКАЯ ПАУЗА ПРИ ПРОБЛЕМАХ
-                if self.fail_count > self.success_count * 0.5 and self.cycle_count > 5:
-                    extra_pause = random.randint(120, 300)
-                    logger.warning(f"Много ошибок! Добавочная пауза {extra_pause} секунд")
-                    await asyncio.sleep(extra_pause)
-                    
-            except asyncio.CancelledError:
-                logger.info("Оптимизированный цикл прерван")
-                break
-                
-            except Exception as e:
-                self.fail_count += 1
-                logger.critical(f"КРИТИЧЕСКАЯ ОШИБКА В ЦИКЛЕ #{self.cycle_count}: {e}")
-                
-                # АВТОВОССТАНОВЛЕНИЕ С УВЕЛИЧЕННОЙ ПАУЗОЙ
-                if self.is_running:
-                    recovery_delay = random.randint(60, 180)
-                    logger.info(f"Восстановление через {recovery_delay} секунд")
-                    await asyncio.sleep(recovery_delay)
+    async def statscmd(self, message):
+        """Статистика: .stats"""
+        status = "🟢 Работает" if self.running else "🔴 Остановлен"
+        await utils.answer(message, f"Статус: {status}\nЧатов: {len(self.chats)}")
 
-    def _select_chats_for_cycle(self, count):
-        """Умный выбор чатов для цикла с учетом истории"""
-        if len(self.target_chats) <= count:
-            return self.target_chats.copy()
-        
-        # Сортируем чаты по времени последней отправки (старые в приоритете)
-        sorted_chats = sorted(
-            self.target_chats,
-            key=lambda x: self.chat_stats[x]["last_send"] or datetime.min
-        )
-        
-        # Берем первые N чатов (те, что давно не получали сообщений)
-        selected = sorted_chats[:count]
-        
-        # Добавляем немного случайности (30% chance добавить случайный чат)
-        if random.random() < 0.3 and len(sorted_chats) > count:
-            random_chat = random.choice(sorted_chats[count:])
-            selected[-1] = random_chat  # Заменяем последний
-        
-        return selected
-
-    def _perform_maintenance_check(self):
-        """Периодическая проверка и оптимизация"""
-        efficiency = self._calculate_efficiency()
-        active_chats = sum(1 for stats in self.chat_stats.values() if stats["success"] > 0)
-        
-        logger.info(
-            f"=== ПЕРИОДИЧЕСКАЯ ПРОВЕРКА #{self.cycle_count//10} ===\n"
-            f"• Эффективность: {efficiency}%\n"
-            f"• Активных чатов: {active_chats}/{len(self.target_chats)}\n"
-            f"• Средняя успешность: {self._calculate_avg_success_rate()}%\n"
-            f"• Циклов с ошибками: {self._count_failed_cycles()}"
-        )
-        
-        # Автоматическая очистка проблемных чатов (если много ошибок)
-        if efficiency < 40:
-            problem_chats = self._identify_problem_chats()
-            if problem_chats:
-                logger.warning(f"Проблемные чаты: {len(problem_chats)}")
-
-    async def ot_statscmd(self, message):
-        """Расширенная статистика: .ot_stats"""
-        if not self.start_time:
-            await utils.answer(message, "📭 Тестирование не запускалось")
-            return
-            
-        current_time = datetime.now()
-        duration = current_time - self.start_time
-        efficiency = self._calculate_efficiency()
-        avg_cycle = self._calculate_avg_cycle_time()
-        avg_success = self._calculate_avg_success_rate()
-        
-        # Рассчет примерного времени до блокировки (образовательная оценка)
-        risk_assessment = self._assess_risk_level()
-        
-        stats_text = f"""
-📊 РАСШИРЕННАЯ СТАТИСТИКА ОПТИМИЗИРОВАННОГО ТЕСТИРОВАНИЯ
-
-⚙️ ПАРАМЕТРЫ РЕЖИМА:
-• Интервал между циклами: 70 секунд
-• Сообщений за цикл: 3
-• Пауза между сообщениями: 5 секунд
-• Ориентировочный цикл: ~80 секунд
-
-📈 РЕЗУЛЬТАТЫ ТЕСТИРОВАНИЯ:
-• Выполнено циклов: {self.cycle_count}
-• Успешных отправок: {self.success_count}
-• Неудачных попыток: {self.fail_count}
-• Общая эффективность: {efficiency}%
-• Средняя успешность чата: {avg_success}%
-• Активных чатов: {self._count_active_chats()}/{len(self.target_chats)}
-
-⏱️ ВРЕМЕННЫЕ ХАРАКТЕРИСТИКИ:
-• Общее время: {self._format_duration(duration)}
-• Среднее время цикла: {avg_cycle} секунд
-• Начало работы: {self.start_time.strftime('%H:%M:%S')}
-• Последняя отправка: {self.last_send_time.strftime('%H:%M:%S') if self.last_send_time else 'нет'}
-• Текущее время: {current_time.strftime('%H:%M:%S')}
-
-📊 СТАТИСТИКА ЧАТОВ:
-• Чатов с успешными отправками: {self._count_chats_with_success()}
-• Чатов только с ошибками: {self._count_chats_with_only_fails()}
-• Неиспользованных чатов: {self._count_unused_chats()}
-
-{risk_assessment}
-
-ℹ️ Статус: {'🟢 АКТИВЕН' if self.is_running else '🔴 ОСТАНОВЛЕН'}
-        """
-        
-        await utils.answer(message, stats_text)
-
-    async def ot_chatstatscmd(self, message):
-        """Статистика по конкретному чату: .ot_chatstats <номер или ссылка>"""
-        args = utils.get_args_raw(message)
-        
-        if not args:
-            # Показываем общую статистику по чатам
-            chat_list = "\n".join([
-                f"{i+1}. {chat.split('/')[-1]:25} ✓{stats['success']:3} ✗{stats['fails']:3}"
-                for i, (chat, stats) in enumerate(list(self.chat_stats.items())[:10])
-            ])
-            
-            if len(self.chat_stats) > 10:
-                chat_list += f"\n... и еще {len(self.chat_stats) - 10} чатов"
-            
-            response = f"📋 СТАТИСТИКА ПО ЧАТАМ (первые 10):\n{chat_list}"
-            await utils.answer(message, response)
-            return
-        
-        # Поиск чата по номеру или ссылке
-        chat_info = None
-        if args.isdigit():
-            idx = int(args) - 1
-            if 0 <= idx < len(self.target_chats):
-                chat = self.target_chats[idx]
-                stats = self.chat_stats[chat]
-                chat_info = (chat, stats)
-        else:
-            # Ищем по ссылке
-            for chat, stats in self.chat_stats.items():
-                if args in chat:
-                    chat_info = (chat, stats)
-                    break
-        
-        if not chat_info:
-            await utils.answer(message, "❌ Чат не найден")
-            return
-        
-        chat, stats = chat_info
-        chat_name = chat.split('/')[-1]
-        
-        total = stats['success'] + stats['fails']
-        success_rate = (stats['success'] / total * 100) if total > 0 else 0
-        
-        chat_stats_text = f"""
-📊 ДЕТАЛЬНАЯ СТАТИСТИКА ЧАТА:
-
-🔗 Ссылка: {chat}
-🏷️ Имя: {chat_name}
-
-📈 СТАТИСТИКА ОТПРАВОК:
-• Успешных: {stats['success']}
-• Неудачных: {stats['fails']}
-• Всего попыток: {total}
-• Успешность: {success_rate:.1f}%
-
-🕒 ВРЕМЕННЫЕ ДАННЫЕ:
-• Последняя отправка: {stats['last_send'].strftime('%Y-%m-%d %H:%M:%S') if stats['last_send'] else 'никогда'}
-• В очереди: {'Да' if stats['last_send'] and (datetime.now() - stats['last_send']).total_seconds() > 3600 else 'Нет'}
-
-📊 ОБЩАЯ ИНФОРМАЦИЯ:
-• В общем списке: {self.target_chats.index(chat) + 1}/{len(self.target_chats)}
-• Приоритет отправки: {'Высокий' if not stats['last_send'] or stats['success'] == 0 else 'Средний' if stats['fails'] > stats['success'] else 'Низкий'}
-        """
-        
-        await utils.answer(message, chat_stats_text)
-
-    async def ot_testcyclecmd(self, message):
-        """Тестовый цикл без ожидания: .ot_testcycle"""
+    async def testcmd(self, message):
+        """Тест: .test"""
         try:
-            if len(self.target_chats) < 3:
-                await utils.answer(message, "❌ Недостаточно чатов для теста")
+            if len(self.chats) < 3:
+                await utils.answer(message, "Мало чатов")
                 return
             
-            # Быстрый тестовый цикл
-            test_chats = random.sample(self.target_chats, min(3, len(self.target_chats)))
-            results = []
+            # Отправляем в 3 случайных чата
+            selected = random.sample(self.chats, 3)
             
-            for i, chat in enumerate(test_chats):
-                chat_name = chat.split('/')[-1]
-                
+            for i, chat in enumerate(selected):
                 try:
-                    await self.client.send_message(chat, self.test_message)
-                    results.append(f"✅ {i+1}. {chat_name}: Успешно")
-                    
-                    # Пауза 5 секунд между отправками
-                    if i < len(test_chats) - 1:
-                        await asyncio.sleep(5)
-                        
+                    await self.client.send_message(chat, self.message)
+                    await asyncio.sleep(5)  # Пауза 5 сек
                 except Exception as e:
-                    error_msg = str(e)[:50]
-                    results.append(f"❌ {i+1}. {chat_name}: {error_msg}")
+                    logger.error(f"Ошибка в {chat}: {e}")
             
-            response = "🔧 ТЕСТОВЫЙ ЦИКЛ:\n\n" + "\n".join(results)
-            await utils.answer(message, response)
+            await utils.answer(message, f"Тест завершен\nОтправлено в: {len(selected)} чатов")
             
         except Exception as e:
-            await utils.answer(message, f"❌ Ошибка тестового цикла: {str(e)}")
+            await utils.answer(message, f"Ошибка теста: {e}")
 
-    async def ot_pausecmd(self, message):
-        """Временная пауза: .ot_pause <минуты>"""
-        if not self.is_running:
-            await utils.answer(message, "ℹ️ Режим не активен")
-            return
-            
-        args = utils.get_args_raw(message)
+    async def main_loop(self):
+        """Основной цикл"""
+        logger.info("Цикл запущен")
         
-        if not args or not args.isdigit():
-            await utils.answer(message, "❌ Укажите время паузы в минутах: .ot_pause 5")
-            return
-            
-        pause_minutes = int(args)
-        
-        if pause_minutes > 60:
-            await utils.answer(message, "⚠️ Максимальная пауза - 60 минут")
-            return
-        
-        pause_seconds = pause_minutes * 60
-        
-        # Временно останавливаем цикл
-        was_running = self.is_running
-        self.is_running = False
+        while self.running:
+            try:
+                # Ждем 70 секунд
+                await asyncio.sleep(70)
+                
+                if not self.running:
+                    break
+                
+                # Выбираем 3 чата
+                if len(self.chats) >= 3:
+                    selected = random.sample(self.chats, 3)
+                else:
+                    selected = self.chats
+                
+                # Отправляем с паузой 5 секунд
+                for i, chat in enumerate(selected):
+                    try:
+                        await self.client.send_message(chat, self.message)
+                        logger.info(f"Отправлено в {chat}")
+                        
+                        # Пауза 5 секунд кроме последнего
+                        if i < len(selected) - 1:
+                            await asyncio.sleep(5)
+                            
+                    except Exception as e:
+                        logger.error(f"Ошибка: {e}")
+                        continue
+                
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Ошибка цикла: {e}")
+                await asyncio.sleep(60)
+
+    async def helpcmd(self, message):
+        """Помощь: .help"""
+        help_text = """
+📋 Команды:
+• .start - запустить
+• .stop - остановить
+• .stats - статус
+• .test - тест
+• .help - помощь
+
+⚙️ Параметры:
+• Интервал: 70 сек
+• Чатов за цикл: 3
+• Пауза между: 5 сек
+        """
+        await utils.answer(message, help_text)
+
+    async def on_unload(self):
+        if self.running:
+            self.running = False
         if self.task:
             self.task.cancel()
-        
-        await utils.answer(message, f"⏸️ Пауза на {pause_minutes} минут...")
-        await asyncio.sleep(pause_seconds)
-        
-        # Возобновляем если был активен
-        if was_running:
-            self.is_running = True
-            self.task = asyncio.create_task(self.optimized_testing_loop())
-            await utils.answer(message, f"▶️ Пауза завершена, работа возобновлена")
-        else:
-            await utils.answer(message, f"▶️ Пауза завершена")
-
-    # Вспомогательные методы
-    def _calculate_efficiency(self):
-        total = self.success_count + self.fail_count
-        return round((self.success_count / total * 100), 1) if total > 0 else 100.0
-
-    def _calculate_avg_cycle_time(self):
-        if self.cycle_count == 0 or not self.start_time:
-            return 0
-        total_seconds = (datetime.now() - self.start_time).total_seconds()
-        return round(total_seconds / self.cycle_count, 1)
-
-    def _calculate_avg_success_rate(self):
-        if not self.chat_stats:
-            return 0
-        rates = []
-        for stats in self.chat_stats.values():
-            total = stats["success"] + stats["fails"]
-            if total > 0:
-                rates.append(stats["success"] / total * 100)
-        return round(sum(rates) / len(rates), 1) if rates else 0
-
-    def _count_active_chats(self):
-        return sum(1 for stats in self.chat_stats.values() if stats["success"] > 0)
-
-    def _count_chats_with_success(self):
-        return sum(1 for stats in self.chat_stats.values() if stats["success"] > 0)
-
-    def _count_chats_with_only_fails(self):
-        return sum(1 for stats in self.chat_stats.values() if stats["fails"] > 0 and stats["success"] == 0)
-
-    def _count_unused_chats(self):
-        return sum(1 for stats in self.chat_stats.values() if stats["success"] == 0 and stats["fails"] == 0)
-
-    def _count_failed_cycles(self):
-        # Простая реализация - предполагаем цикл с ошибкой если были ошибки в последних 5 циклах
-        return min(self.cycle_count // 3, 10)  # Упрощенная логика
-
-    def _identify_problem_chats(self):
-        problem_chats = []
-        for chat, stats in self.chat_stats.items():
-            total = stats["success"] + stats["fails"]
-            if total >= 3 and stats["success"] / total < 0.3:
-                problem_chats.append(chat.split('/')[-1])
-        return problem_chats
-
-    def _get_top_chats(self, count):
-        sorted_chats = sorted(
-            self.chat_stats.items(),
-            key=l
+        logger.info("Модуль выгружен")
