@@ -1,0 +1,169 @@
+# meta developer: @твой_ник
+# meta pic: https://img.icons8.com/color/48/000000/flash-on.png
+# scope: hikka_only
+# scope: hikka_min 1.6.0
+
+import asyncio
+from .. import loader, utils
+import logging
+
+logger = logging.getLogger(__name__)
+
+@loader.tds
+class InstantCommentMod(loader.Module):
+    """Мгновенный комментарий под новым постом (без задержки)"""
+    
+    strings = {
+        "name": "InstantComment",
+        "started": "⚡ Мгновенное комментирование запущено!\n📢 Канал: {}\n💬 Текст: подари мне мишку 🐻",
+        "stopped": "⏹️ Остановлено",
+        "already": "⚠️ Уже работает",
+        "not_running": "📭 Не запущено",
+        "status_on": "🟢 Работает (мгновенно)",
+        "status_off": "🔴 Остановлено",
+        "status_text": "📊 Статус: {}\n📢 Канал: {}\n💬 Последний комментарий: пост {}\n⚡ Задержка: 0 мс"
+    }
+    
+    def __init__(self):
+        self.is_running = False
+        self.target_channel_id = -1003084855353
+        self.comment_text = "подари мне мишку 🐻"
+        self.last_commented_id = 0
+    
+    async def client_ready(self, client, db):
+        self.client = client
+        self.db = db
+        self.last_commented_id = self.db.get(__name__, "last_id", 0)
+        logger.info(f"InstantComment загружен, последний комментарий: {self.last_commented_id}")
+    
+    @loader.command(
+        ru_doc="Запустить мгновенное комментирование",
+        en_doc="Start instant commenting"
+    )
+    async def icstartcmd(self, message):
+        """Запустить"""
+        if self.is_running:
+            await utils.answer(message, self.strings("already"))
+            return
+        
+        self.is_running = True
+        await utils.answer(
+            message,
+            self.strings("started").format(self.target_channel_id)
+        )
+        logger.info(f"Мгновенное комментирование запущено")
+    
+    @loader.command(
+        ru_doc="Остановить",
+        en_doc="Stop"
+    )
+    async def icstopcmd(self, message):
+        """Остановить"""
+        if not self.is_running:
+            await utils.answer(message, self.strings("not_running"))
+            return
+        
+        self.is_running = False
+        await utils.answer(message, self.strings("stopped"))
+        logger.info("Остановлено")
+    
+    @loader.command(
+        ru_doc="Статус",
+        en_doc="Status"
+    )
+    async def icstatuscmd(self, message):
+        """Статус"""
+        status = self.strings["status_on"] if self.is_running else self.strings["status_off"]
+        
+        last = self.last_commented_id if self.last_commented_id > 0 else "нет"
+        
+        await utils.answer(
+            message,
+            self.strings("status_text").format(
+                status,
+                self.target_channel_id,
+                last
+            )
+        )
+    
+    @loader.command(
+        ru_doc="Изменить текст комментария",
+        en_doc="Change comment text"
+    )
+    async def ictextcmd(self, message):
+        """Изменить текст комментария <новый текст>"""
+        text = utils.get_args_raw(message)
+        
+        if not text:
+            await utils.answer(
+                message, 
+                f"📝 Текущий текст: {self.comment_text}\n\n"
+                f"Чтобы изменить: .ictext <новый текст>"
+            )
+            return
+        
+        self.comment_text = text
+        await utils.answer(message, f"✅ Текст изменен на: {self.comment_text}")
+    
+    @loader.command(
+        ru_doc="Сбросить счетчик",
+        en_doc="Reset counter"
+    )
+    async def icresetcmd(self, message):
+        """Сбросить последний ID"""
+        self.last_commented_id = 0
+        self.db.set(__name__, "last_id", 0)
+        await utils.answer(message, "🔄 Счетчик сброшен")
+    
+    async def watcher(self, message):
+        """
+        МГНОВЕННО комментирует каждый новый пост
+        """
+        # Проверяем что включено
+        if not self.is_running:
+            return
+        
+        try:
+            # Определяем ID канала
+            chat_id = None
+            if hasattr(message, 'peer_id'):
+                if hasattr(message.peer_id, 'channel_id'):
+                    chat_id = message.peer_id.channel_id
+            elif hasattr(message, 'chat_id'):
+                chat_id = message.chat_id
+            
+            # Не наш канал
+            if chat_id != self.target_channel_id:
+                return
+            
+            # Свои сообщения пропускаем
+            if message.out:
+                return
+            
+            # Проверяем что это пост (не комментарий)
+            if hasattr(message, 'reply_to') and message.reply_to:
+                if message.reply_to.reply_to_msg_id:
+                    return
+            
+            # Уже комментировали этот пост
+            if message.id <= self.last_commented_id:
+                return
+            
+            # ✅ МГНОВЕННЫЙ КОММЕНТАРИЙ (без await asyncio.sleep)
+            logger.info(f"НОВЫЙ ПОСТ {message.id} - КОММЕНТИРУЮ МГНОВЕННО!")
+            
+            # Отправляем комментарий сразу
+            await message.reply(self.comment_text)
+            
+            # Запоминаем
+            self.last_commented_id = message.id
+            self.db.set(__name__, "last_id", message.id)
+            
+            logger.info(f"✅ Мгновенно отправлен комментарий на пост {message.id}")
+            
+        except Exception as e:
+            logger.error(f"Ошибка: {e}")
+    
+    async def on_unload(self):
+        """Сохраняем при выгрузке"""
+        self.db.set(__name__, "last_id", self.last_commented_id)
