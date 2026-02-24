@@ -1,0 +1,66 @@
+# meta developer: @yournick
+from .. import loader, utils
+import asyncio
+
+@loader.tds
+class TonSpamMod(loader.Module):
+    """Модуль для отправки сообщений после каждых 56 сообщений в чате"""
+    strings = {"name": "TonSpammer"}
+
+    async def client_ready(self, client, db):
+        self.client = client
+        self.db = db
+        self.running = False
+        self.last_msg_count = 0
+
+    async def spamstartcmd(self, message):
+        """Запустить мониторинг чата @TonTakeGarant"""
+        if self.running:
+            await utils.answer(message, "<b>Мониторинг уже запущен!</b>")
+            return
+        
+        self.running = True
+        self.task = asyncio.create_task(self.monitor_chat())
+        await utils.answer(message, "<b>Мониторинг чата запущен!</b>")
+
+    async def spamstopcmd(self, message):
+        """Остановить мониторинг"""
+        if not self.running:
+            await utils.answer(message, "<b>Мониторинг не запущен!</b>")
+            return
+        
+        self.running = False
+        if self.task:
+            self.task.cancel()
+        await utils.answer(message, "<b>Мониторинг остановлен!</b>")
+
+    async def monitor_chat(self):
+        target = "@TonTakeGarant"
+        msg = """Продам папки с 500+ чатами по тематике нфт 
+1$/0.7 тон 
+
+Накрутка любого вида💬 
+👥Подписчики
+👍Реакции
+👀Просмотры
+✅принимаю рубли, баксы, тоны, звезды
+
+Писать сюда @vingln"""
+        
+        chat = await self.client.get_entity(target)
+        
+        while self.running:
+            try:
+                messages = await self.client.get_messages(chat, limit=1)
+                if messages:
+                    current_count = messages[0].id
+                    
+                    if current_count % 56 == 0 and current_count != self.last_msg_count:
+                        await self.client.send_message(chat, msg)
+                        self.last_msg_count = current_count
+                        
+                await asyncio.sleep(5)
+                
+            except Exception as e:
+                print(f"Ошибка: {e}")
+                await asyncio.sleep(10)
